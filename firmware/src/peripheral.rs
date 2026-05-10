@@ -13,7 +13,7 @@ mod scan_map;
 use defmt::{info, unwrap};
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_nrf::gpio::{Flex, Level, Output, OutputDrive};
+use embassy_nrf::gpio::{Flex, Level, Output, OutputDrive, Pull};
 use embassy_nrf::mode::Async;
 use embassy_nrf::peripherals::RNG;
 use embassy_nrf::peripherals::USBD;
@@ -125,7 +125,10 @@ async fn main(spawner: Spawner) {
     // Pin order matches keymap col indexing for the right half:
     //   col 0 (= unified col 5, inner index Y) → /COL0 wire (P1_12)
     //   col 4 (= unified col 9, outer pinky P) → /COL4 wire (P0_10)
-    let pins: [Flex<'static>; PIN_NUM] = [
+    //
+    // See central.rs for why we must initialize every pin as a pull-down
+    // input before handing them to BidirectionalMatrix.
+    let mut pins: [Flex<'static>; PIN_NUM] = [
         Flex::new(p.P0_29), // ROW0
         Flex::new(p.P0_04), // ROW1
         Flex::new(p.P0_05), // ROW2
@@ -136,6 +139,9 @@ async fn main(spawner: Spawner) {
         Flex::new(p.P1_15), // /COL3 wire
         Flex::new(p.P0_10), // /COL4 wire (P pinky col)
     ];
+    for pin in pins.iter_mut() {
+        pin.set_as_input(Pull::Down);
+    }
 
     // Storage for the peripheral half (small reservation; nothing
     // user-meaningful is persisted on this side, but RMK requires a

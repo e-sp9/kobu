@@ -17,7 +17,7 @@ mod vial;
 use defmt::{info, unwrap};
 use defmt_rtt as _;
 use embassy_executor::Spawner;
-use embassy_nrf::gpio::{Flex, Level, Output, OutputDrive};
+use embassy_nrf::gpio::{Flex, Level, Output, OutputDrive, Pull};
 use embassy_nrf::mode::Async;
 use embassy_nrf::peripherals::{RNG, USBD};
 use embassy_nrf::usb::Driver;
@@ -150,7 +150,15 @@ async fn main(spawner: Spawner) {
     // Build the 9-pin Flex array.  The pin order is documented in `scan_map.rs`:
     // [ROW0, ROW1, ROW2, ROW3, /COL4, /COL3, /COL2, /COL1, /COL0]
     // i.e. the col entries are in reverse net order so keymap col 0 = pinky.
-    let pins: [Flex<'static>; PIN_NUM] = [
+    //
+    // CRITICAL: Flex::new leaves the pin in DISCONNECTED mode (no pull,
+    // no drive). The BidirectionalMatrix scan loop only flips a pin to
+    // input mode after using it as output once. Pins that are *only ever*
+    // in_pin (in our scan_map: ROW0..ROW2 for main keys, COL pins for
+    // thumb keys) would stay in disconnected mode forever and is_high()
+    // would read garbage. So we explicitly set every pin as a pull-down
+    // input up front.
+    let mut pins: [Flex<'static>; PIN_NUM] = [
         Flex::new(p.P0_29), // ROW0
         Flex::new(p.P0_04), // ROW1
         Flex::new(p.P0_05), // ROW2
@@ -161,6 +169,9 @@ async fn main(spawner: Spawner) {
         Flex::new(p.P1_13), // /COL1 wire
         Flex::new(p.P1_12), // /COL0 wire (T inner-index col)
     ];
+    for pin in pins.iter_mut() {
+        pin.set_as_input(Pull::Down);
+    }
 
     // Keyboard / vial / storage configuration
     let keyboard_device_config = DeviceConfig {
