@@ -98,11 +98,14 @@ keymap = [
         ["Q",    "W",    "E",    "R",    "T",         "Y",    "U",    "I",    "O",    "P"],
         ["A",    "S",    "D",    "F",    "G",         "H",    "J",    "K",    "L",    "Semicolon"],
         ["Z",    "X",    "C",    "V",    "B",         "N",    "M",    "Comma","Dot",  "Slash"],
-        # Thumb diagnostic keymap. With LEFT col_pins reversed, keymap
-        # col 0 = outer pinky position (no thumb switch), cols 1..4 =
-        # SW5..SW2 (outer thumb → inner thumb). Going left-to-right
-        # across both halves the thumb keys read A B C D | E F G H.
-        ["No",   "A",    "B",    "C",    "D",         "E",    "F",    "G",    "H",   "No"],
+        # Thumb diagnostic keymap. With LEFT col_pins reversed the
+        # column ordering on the left half goes outer-pinky-phantom →
+        # SW5 → SW4 → SW3 → SW2 (cols 0..4). To keep the user-facing
+        # convention of "inner-to-outer = A B C D" on the left half
+        # (and "inner-to-outer = E F G H" on the right half), put the
+        # letters in reverse order on the left: D at col 1 (outer
+        # thumb SW5), A at col 4 (inner thumb SW2).
+        ["No",   "D",    "C",    "B",    "A",         "E",    "F",    "G",    "H",   "No"],
     ],
     [
         ["Kc1",  "Kc2",  "Kc3",  "Kc4",  "Kc5",       "Kc6",  "Kc7",  "Kc8",  "Kc9",  "Kc0"],
