@@ -150,6 +150,29 @@ pin = "P0_30"
 low_active = true
 initial_state_active = true
 
+# LEFT-board trackball (PMW3610). Sits on the central MCU (= left half).
+# Pin mapping is documented at the top of this file:
+#   D0  P0_02 = SDIO  (shared MOSI/MISO bit-banged on a single line)
+#   D1  P0_03 = SCLK
+#   D2  P0_28 = MOTION (active-low IRQ) — INTENTIONALLY UNCONFIGURED below
+#                so the driver polls continuously rather than gating reads on
+#                the MOTION pin. Keeps the trackball alive even if MOTION
+#                wiring/polarity is wrong, at the cost of always-on polling.
+#   NFC1 P0_09 = NCS  (chip select)
+# Uses the default Pmw3610Processor (emits MouseReport x/y) via the
+# auto-generated entry — no custom processor or override.
+[[split.central.input_device.pmw3610]]
+name = "left"
+cpi = 800
+force_awake = true
+
+[split.central.input_device.pmw3610.spi]
+instance = ""
+sck = "P0_03"
+mosi = "P0_02"
+miso = ""
+cs = "P0_09"
+
 # Right half = peripheral 0. Keys occupy cols 5..9.
 [[split.peripheral]]
 rows = 4
@@ -168,6 +191,10 @@ row2col = true  # drive /ROW high, read /COL — required for per-silkscreen dio
 pin = "P0_30"
 low_active = true
 initial_state_active = true
+
+# Right-board trackball (peripheral) intentionally omitted. The user has
+# only the LEFT board built; once the RIGHT board exists, re-add a
+# `[[split.peripheral.input_device.pmw3610]]` block here.
 
 [rmk]
 split_peripherals_num = 1
