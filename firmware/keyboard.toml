@@ -82,62 +82,137 @@ usb_enable = true
 [layout]
 rows = 4
 cols = 10
-layers = 4
-# Layout is a 38-key 4x10 split. Left half occupies cols 0..4, right half 5..9.
-# Row 0..2 are the 3x5 main-unit keys on each side. Row 3 has 4 thumb keys
-# per side on cols 1..4 (left) / 5..8 (right). The phantom (no-switch)
-# slots on row 3 are (3, 0) and (3, 9) — those are the outer-pinky
-# columns (/COL4 wire) where the PCB has no thumb switch.
-# LEFT col_pins are reversed so keymap col 0 = outer pinky (Q column);
-# RIGHT col_pins are natural (col 5 = inner-index Y column).
+layers = 7
+# 38-key 4×10 split (phantom thumb slots at (3,0) and (3,9)). Keymap ported
+# position-by-position from KobitoKey_QWERTY (ZMK source-of-truth) — see
+# ../KobitoKey_QWERTY/config/KobitoKey.keymap. The kobu PCB has 4 thumbs per
+# side vs KobitoKey's 3, so the two extra outer-thumb slots ((3,1) and (3,8))
+# carry Delete on the base layer to flag that they are "kobu-only" positions
+# the user can repurpose via Vial.
+#
+# ZMK LANG2 / LANG1 → RMK Language2 / Language1 (HID 0x91 / 0x90). These are
+# the actual 英数 / かな keys on macOS JIS. The previous port used
+# International5 / International4 (HID 0x8B / 0x8A = Muhenkan/Henkan) which
+# macOS does NOT treat as 英数/かな without external help (Karabiner). See
+# rmk-types-0.2.2/src/keycode.rs:283–284 for the RMK definitions.
 keymap = [
+    # Layer 0 — Mac / default (ZMK default_layer)
     [
-        ["Q",    "W",    "E",    "R",    "T",         "Y",    "U",    "I",    "O",    "P"],
-        ["A",    "S",    "D",    "F",    "G",         "H",    "J",    "K",    "L",    "Semicolon"],
-        ["Z",    "X",    "C",    "V",    "B",         "N",    "M",    "Comma","Dot",  "Slash"],
-        # Thumb row. (3, 0) and (3, 9) are phantom slots on the
-        # outer-pinky /COL4 wire where the PCB has no switch.
-        # LEFT thumbs (outer -> inner, cols 1..4) = LCtrl LAlt MO(2) Space.
-        # RIGHT thumbs (inner -> outer, cols 5..8) = Enter MO(1) RShift RAlt.
-        # MO(3) (Bluetooth layer) is not bound on the physical layout;
-        # use Vial to reach layer 3 — see README "Layer 3" section.
-        ["No",   "LCtrl","LAlt", "MO(2)","Space",     "Enter","MO(1)","RShift","RAlt","No"],
+        ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
+        ["A", "S", "D", "F", "G", "H", "J", "K", "L", "MT(Semicolon, LGui|LShift, FH)"],
+        ["Z", "X", "C", "V", "B", "N", "M", "Comma", "Dot", "MT(Slash, LGui|LCtrl, FH)"],
+        # Thumb row mirrors source positions 32..37 1:1. kobu's extra outer
+        # thumbs at cols 1 and 8 (KobitoKey has &none here) → kobu-only
+        # additions, both carrying plain Backspace per the explicit user
+        # request:
+        #   LEFT  (XIAO直下 → 外側): 英数/Shift, Ctrl, BS/Cmd, BS
+        #   RIGHT (XIAO直下 → 外側): Esc/Alt, Space/LT(2), Enter/LT(3), BS
+        ["No", "Backspace", "MT(Backspace, LGui, FH)", "LCtrl", "MT(Language2, LShift, FH)", "MT(Escape, LAlt, FH)", "LT(2, Space, FH)", "LT(3, Enter, FH)", "Backspace", "No"],
     ],
+    # Layer 1 — Win/Linux overlay (ZMK layer1)
     [
-        ["Kc1",  "Kc2",  "Kc3",  "Kc4",  "Kc5",       "Kc6",  "Kc7",  "Kc8",  "Kc9",  "Kc0"],
-        ["Minus","Equal","LeftBracket","RightBracket","Backslash",  "Grave","Quote","No","No","No"],
-        ["No",   "No",   "No",   "No",   "No",        "No",   "No",   "No",   "No",   "No"],
-        ["_",    "_",    "_",    "_",    "_",         "_",    "_",    "_",    "_",    "_"],
+        ["_", "_", "_", "_", "_", "_", "_", "_", "_", "_"],
+        ["_", "_", "_", "_", "_", "_", "_", "_", "_", "MT(Semicolon, LCtrl|LShift, FH)"],
+        ["_", "_", "_", "_", "_", "_", "_", "_", "_", "MT(Slash, LCtrl|LAlt, FH)"],
+        ["_", "_", "MT(Backspace, LAlt, FH)", "LT(5, LGui, FH)", "_", "MT(Escape, LGui, FH)", "_", "_", "_", "_"],
     ],
+    # Layer 2 — numbers / symbols (ZMK layer2)
     [
-        ["F1",   "F2",   "F3",   "F4",   "F5",        "F6",   "F7",   "F8",   "F9",   "F10"],
-        ["Home", "PageUp","PageDown","End","Insert",  "Left", "Down", "Up",   "Right","Delete"],
-        ["F11",  "F12",  "No",   "No",   "No",        "No",   "No",   "No",   "No",   "No"],
-        ["_",    "_",    "_",    "_",    "_",         "_",    "_",    "_",    "_",    "_"],
+        ["Kc1", "Kc2", "Kc3", "Kc4", "Kc5", "Kc6", "Kc7", "Kc8", "Kc9", "Kc0"],
+        ["WM(Kc1, LShift)", "WM(Kc2, LShift)", "WM(Kc3, LShift)", "WM(Kc4, LShift)", "WM(Kc5, LShift)", "Left", "Down", "Up", "Right", "_"],
+        ["WM(Kc6, LShift)", "WM(Kc7, LShift)", "WM(Kc8, LShift)", "WM(Kc9, LShift)", "WM(Kc0, LShift)", "No", "No", "No", "No", "_"],
+        ["_", "_", "_", "_", "MT(Language1, LShift, FH)", "_", "_", "_", "_", "_"],
     ],
-    # Layer 3 — Bluetooth / output management.
-    #
-    # Vial's "user keycodes" are pre-wired in RMK 0.8 (`keyboard.rs` /
-    # `process_user`) to BLE profile actions, indexed off `NUM_BLE_PROFILE`
-    # (= `ble_profiles_num` above = 4). With 4 profiles the mapping is:
-    #   User0..User3  → switch to profile 0..3
-    #   User4         → next profile
-    #   User5         → previous profile
-    #   User6         → clear bond for current profile
-    #   User7         → toggle default output between USB and BLE
-    #   User8 (held 5s) → clear split-peer bond  (not bound here yet)
-    # The names in vial.json `customKeycodes` are pure UI labels — RMK
-    # always derives the action from the User-keycode number, so the two
-    # lists must agree on order or Vial will mislabel the actions.
-    #
-    # Reachability: there is currently no key on layers 0..2 that activates
-    # layer 3. Bind a key to MO(3) via Vial when BLE management is needed.
+    # Layer 3 — settings, media, BLE (ZMK layer3). Source &bt BT_SEL 0..3 →
+    # kobu User0..User3; source &bt BT_CLR → User6. BT_SEL 4 at pos 4 is
+    # dropped (kobu has only 4 BLE profiles — ble_profiles_num = 4). Source
+    # positions left as `&none` stay "No" to match the original keymap; the
+    # kobu User4/User5/User7 keycodes can be reattached via Vial.
     [
-        ["User0","User1","User2","User3","User4",     "User5","User6","User7","No",   "No"],
-        ["No",   "No",   "No",   "No",   "No",        "No",   "No",   "No",   "No",   "No"],
-        ["No",   "No",   "No",   "No",   "No",        "No",   "No",   "No",   "No",   "No"],
-        ["_",    "_",    "_",    "_",    "_",         "_",    "_",    "_",    "_",    "_"],
+        ["User0", "User1", "User2", "User3", "No", "MediaPrevTrack", "MediaPlayPause", "MediaNextTrack", "AudioVolDown", "AudioVolUp"],
+        ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"],
+        ["TO(0)", "TG(1)", "No", "No", "User6", "F11", "F12", "F13", "No", "_"],
+        ["_", "_", "_", "_", "_", "Delete", "_", "_", "_", "_"],
     ],
+    # Layer 4 — mouse (ZMK layer4; trackball motion is separate). Source pos
+    # 10 (mt LSHFT LG(LBKT) = tap Cmd+[, hold LShift) → TD(2), defined in
+    # [behavior.morse] below since RMK MT cannot express tap=key+modifier.
+    # Source pos 7 of row 0 is `mkp MB2` (apparent typo for MB3) — ported
+    # verbatim per "正確に実装".
+    [
+        ["WM(LeftBracket, LGui|LShift)", "WM(RightBracket, LGui|LShift)", "No", "No", "No", "MouseBtn1", "MouseBtn2", "MouseBtn2", "MouseBtn3", "_"],
+        ["TD(2)", "WM(RightBracket, LGui)", "No", "No", "No", "No", "No", "No", "No", "_"],
+        ["LCtrl", "No", "WM(C, LGui)", "WM(V, LGui)", "No", "No", "No", "No", "No", "_"],
+        ["_", "_", "_", "_", "_", "_", "_", "_", "_", "_"],
+    ],
+    # Layer 5 — Emacs (ZMK layer5)
+    [
+        ["WM(Q, LCtrl)", "WM(W, LCtrl)", "End", "WM(R, LCtrl)", "WM(T, LCtrl)", "WM(Y, LCtrl)", "WM(U, LCtrl)", "WM(I, LCtrl)", "WM(O, LCtrl)", "Up"],
+        ["TD(1)", "WM(S, LCtrl)", "Delete", "Right", "WM(G, LCtrl)", "Backspace", "WM(J, LCtrl)", "TD(0)", "WM(L, LCtrl)", "WM(Semicolon, LCtrl)"],
+        ["WM(Z, LCtrl)", "WM(X, LCtrl)", "WM(C, LCtrl)", "WM(V, LCtrl)", "Left", "Down", "WM(M, LCtrl)", "WM(Comma, LCtrl)", "WM(Dot, LCtrl)", "WM(Quote, LCtrl)"],
+        ["_", "_", "_", "_", "_", "_", "_", "_", "_", "_"],
+    ],
+    # Layer 6 — Neovim (ZMK layer6)
+    [
+        ["_", "_", "_", "_", "_", "_", "_", "_", "_", "_"],
+        ["_", "_", "_", "_", "_", "_", "_", "_", "_", "_"],
+        ["_", "_", "_", "_", "_", "_", "_", "_", "_", "_"],
+        ["_", "_", "_", "LCtrl", "_", "_", "_", "_", "_", "_"],
+    ],
+]
+
+# Combos — ported 1:1 from ZMK `key-positions`, resolved to keycodes via the
+# source default_layer (RMK combos match on pressed keycodes, not on matrix
+# positions). Chord output uses base keycodes; Shift produces the natural
+# shifted symbol. Inverted morphs (`:` ↔ `;`, `|` ↔ `\`) live in
+# [behavior.fork] below.
+[behavior.combo]
+timeout = "50ms"
+combos = [
+    { actions = ["Q", "W"], output = "Grave" },                          # combo_grave (pos 0,1)
+    { actions = ["A", "S"], output = "Tab" },                            # combo_tab (pos 10,11)
+    { actions = ["Y", "U"], output = "Backspace" },                      # combo_yu_bspc (pos 5,6)
+    { actions = ["U", "I"], output = "Backslash" },                      # combo_pipe (pos 6,7) → fork to `|`
+    { actions = ["I", "O"], output = "Minus" },                          # combo_minus (pos 7,8)
+    { actions = ["O", "P"], output = "Equal" },                          # combo_plus (pos 8,9)
+    { actions = ["J", "K"], output = "LeftBracket" },                    # combo_lbkt (pos 16,17)
+    { actions = ["K", "L"], output = "RightBracket" },                   # combo_rbkt (pos 17,18)
+    { actions = ["L", "Semicolon"], output = "Quote" },                  # combo_squote (pos 18,19)
+    { actions = ["N", "M"], output = "Backspace" },                      # combo_bspc (pos 25,26)
+    { actions = ["Comma", "Dot"], output = "Slash" },                    # combo_question (pos 27,28)
+    { actions = ["D", "F"], output = "WM(No, LGui|LAlt)", layer = 0 },   # combo_cmd_alt (pos 12,13, Mac)
+    { actions = ["D", "F"], output = "WM(No, LCtrl|LAlt)", layer = 1 },  # combo_ctrl_alt (pos 12,13, Win/Linux)
+    { actions = ["S", "D"], output = "TG(6)", layer = 1 },               # combo_neovim_toggle (pos 11,12, Win/Linux)
+    { actions = ["S", "D"], output = "TG(6)", layer = 6 },               # combo_neovim_toggle (pos 11,12, Neovim → back)
+]
+
+# Fork — ZMK mod-morph (colon/semicolon, pipe/backslash)
+[behavior.fork]
+forks = [
+    { trigger = "Semicolon", negative_output = "WM(Semicolon, LShift)", positive_output = "Semicolon", match_any = "LShift|RShift" },
+    { trigger = "Backslash", negative_output = "WM(Backslash, LShift)", positive_output = "Backslash", match_any = "LShift|RShift" },
+]
+
+[behavior.morse]
+hold_on_other_press = true
+hold_timeout = "200ms"
+gap_timeout = "200ms"
+morses = [
+    { tap = "WM(K, LCtrl)", double_tap = "Macro(0)" },              # TD(0) = td_kill_line
+    { tap = "Home", double_tap = "WM(A, LCtrl)" },                  # TD(1) = td_home_ctla
+    { tap = "WM(LeftBracket, LGui)", hold = "LShift", profile = "FH" },  # TD(2) = mt LSHFT LG(LBKT) on layer 4
+]
+
+[behavior.morse.profiles]
+FH = { hold_on_other_press = true, hold_timeout = "200ms", gap_timeout = "200ms" }
+
+[[behavior.macro.macros]]
+operations = [
+    { operation = "down", keycode = "LShift" },
+    { operation = "tap", keycode = "End" },
+    { operation = "up", keycode = "LShift" },
+    { operation = "delay", duration = "30ms" },
+    { operation = "tap", keycode = "Delete" },
 ]
 
 [ble]
@@ -273,6 +348,9 @@ cs = "P0_09"
 split_peripherals_num = 1
 ble_profiles_num = 4
 combo_max_num = 16
+morse_max_num = 4
+macro_space_size = 256
+fork_max_num = 8
 
 # Vial / Web keymap editor wiring.
 # Vial speaks USB Raw HID (vendor usage page 0xFF60), so it's only reachable
