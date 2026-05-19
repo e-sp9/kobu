@@ -11,19 +11,19 @@ export function ConnectionStatus() {
     case 'unsupported':
       return (
         <span className="text-xs text-amber-700 dark:text-amber-400" aria-live="polite">
-          WebHID unsupported
+          WebHID 非対応
         </span>
       );
     case 'idle':
       return (
         <span className="text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
-          Disconnected
+          未接続
         </span>
       );
     case 'connecting':
       return (
         <span className="text-xs text-zinc-500 dark:text-zinc-400" aria-live="polite">
-          Connecting…
+          接続中…
         </span>
       );
     case 'ready':
@@ -35,7 +35,7 @@ export function ConnectionStatus() {
         >
           ● {state.deviceName}
           {state.definitionFromCache && (
-            <span className="ml-1 text-zinc-500 dark:text-zinc-400">(cached)</span>
+            <span className="ml-1 text-zinc-500 dark:text-zinc-400">（キャッシュ）</span>
           )}
         </span>
       );
@@ -46,7 +46,7 @@ export function ConnectionStatus() {
           title={`UID ${state.uidHex}`}
           aria-live="polite"
         >
-          Wrong device
+          別のデバイス
         </span>
       );
     case 'error':

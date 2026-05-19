@@ -8,7 +8,7 @@ describe('ConnectButton', () => {
     delete (navigator as { hid?: unknown }).hid;
 
     render(<ConnectButton />);
-    expect(screen.getByText(/WebHID is not available/i)).toBeInTheDocument();
+    expect(screen.getByText(/WebHID に対応していません/)).toBeInTheDocument();
 
     if (originalHid !== undefined) {
       (navigator as { hid?: unknown }).hid = originalHid;

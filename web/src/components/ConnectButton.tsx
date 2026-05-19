@@ -4,15 +4,15 @@ import { useConnectionStore } from '../state/connection';
 function recoveryHint(errorKind: string): string {
   switch (errorKind) {
     case 'webhid-unsupported':
-      return 'Use Chrome, Edge, Brave, or Opera on desktop or Android.';
+      return 'デスクトップまたは Android で Chrome / Edge / Brave / Opera を使用してください。';
     case 'open-failed':
-      return 'Another tab might already be holding the device. Close it and try again.';
+      return '他のタブがデバイスを掴んでいる可能性があります。そのタブを閉じてからやり直してください。';
     case 'receive-timeout':
-      return 'kobu did not reply. Unplug and replug the USB cable, then retry.';
+      return 'kobu から応答がありません。USB ケーブルを抜き差ししてから再試行してください。';
     case 'disconnected':
-      return 'The cable was unplugged mid-request. Plug it back in and reconnect.';
+      return '通信中にケーブルが抜けました。差し直して再接続してください。';
     case 'send-failed':
-      return 'Writing to kobu failed. Check the cable and try again.';
+      return 'kobu への書き込みに失敗しました。ケーブルを確認してから再試行してください。';
     default:
       return '';
   }
@@ -34,8 +34,8 @@ export function ConnectButton() {
   if (state.kind === 'unsupported') {
     return (
       <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-4 text-sm">
-        WebHID is not available in this browser. Use a Chromium-based browser (Chrome, Edge, Brave,
-        or Opera) on desktop or Android.
+        このブラウザは WebHID に対応していません。デスクトップまたは Android で Chromium 系ブラウザ
+        （Chrome / Edge / Brave / Opera）を使用してください。
       </div>
     );
   }
@@ -47,17 +47,17 @@ export function ConnectButton() {
       <div className="space-y-3">
         <div className="rounded-md border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 p-4 text-sm space-y-1">
           <p>
-            Connected to <span className="font-medium">{state.deviceName}</span>
+            <span className="font-medium">{state.deviceName}</span> に接続しました
             {state.definitionFromCache && (
               <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
-                (definition served from cache)
+                （キーボード定義はキャッシュから読み込み）
               </span>
             )}
           </p>
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
             Via 0x{handshake.viaProtocolVersion.toString(16).padStart(4, '0')} / Vial 0x
-            {handshake.keyboardId.vialProtocolVersion.toString(16).padStart(4, '0')} / matrix{' '}
-            {matrix.rows}×{matrix.cols} / {handshake.definition.layouts.keymap.length} layout row(s)
+            {handshake.keyboardId.vialProtocolVersion.toString(16).padStart(4, '0')} / マトリクス{' '}
+            {matrix.rows}×{matrix.cols} / レイアウト {handshake.definition.layouts.keymap.length} 行
           </p>
         </div>
         <button
@@ -67,7 +67,7 @@ export function ConnectButton() {
           }}
           className="rounded-md border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-900"
         >
-          Disconnect
+          切断
         </button>
       </div>
     );
@@ -77,10 +77,10 @@ export function ConnectButton() {
     return (
       <div className="space-y-3">
         <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-4 text-sm space-y-1">
-          <p className="font-medium">This is not a kobu.</p>
+          <p className="font-medium">これは kobu ではありません。</p>
           <p className="text-xs text-zinc-700 dark:text-zinc-300">
-            The keyboard reported UID <code className="font-mono">{state.uidHex}</code>, which does
-            not match kobu's VIAL_KEYBOARD_ID. Pick a different device.
+            キーボードが返した UID <code className="font-mono">{state.uidHex}</code> は kobu の
+            VIAL_KEYBOARD_ID と一致しません。別のデバイスを選択してください。
           </p>
         </div>
         <button
@@ -90,7 +90,7 @@ export function ConnectButton() {
           }}
           className="rounded-md border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-900"
         >
-          Disconnect
+          切断
         </button>
       </div>
     );
@@ -111,7 +111,7 @@ export function ConnectButton() {
           onClick={clearError}
           className="rounded-md border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-900"
         >
-          Try again
+          再試行
         </button>
       </div>
     );
@@ -127,7 +127,7 @@ export function ConnectButton() {
       disabled={busy}
       className="rounded-md bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 px-4 py-2 text-sm font-medium disabled:opacity-60"
     >
-      {busy ? 'Connecting…' : 'Connect to kobu'}
+      {busy ? '接続中…' : 'kobu に接続'}
     </button>
   );
 }
