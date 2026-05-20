@@ -58,6 +58,7 @@ function createMockDevice(productName = 'kobu'): HIDDevice {
     close: vi.fn(async function (this: { opened: boolean }) {
       this.opened = false;
     }),
+    forget: vi.fn(async () => undefined),
     sendReport: vi.fn(async () => undefined),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
@@ -168,7 +169,7 @@ describe('useConnectionStore', () => {
     expect(useConnectionStore.getState().state.kind).toBe('idle');
   });
 
-  it('disconnect closes the transport and returns to idle', async () => {
+  it('disconnect closes the transport, forgets the device, and returns to idle', async () => {
     const device = createMockDevice();
     fakeHid.requestDevice.mockResolvedValueOnce([device]);
     mockPerformHandshake.mockResolvedValueOnce(fakeHandshakeResult());
@@ -178,6 +179,20 @@ describe('useConnectionStore', () => {
     await useConnectionStore.getState().disconnect();
     expect(useConnectionStore.getState().state.kind).toBe('idle');
     expect(device.close).toHaveBeenCalled();
+    expect(device.forget).toHaveBeenCalled();
+  });
+
+  it('disconnect still succeeds even if forget() throws', async () => {
+    const device = createMockDevice();
+    (device.forget as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('forget not supported'),
+    );
+    fakeHid.requestDevice.mockResolvedValueOnce([device]);
+    mockPerformHandshake.mockResolvedValueOnce(fakeHandshakeResult());
+    await useConnectionStore.getState().promptConnect();
+
+    await useConnectionStore.getState().disconnect();
+    expect(useConnectionStore.getState().state.kind).toBe('idle');
   });
 
   it('second connect uses the cached definition', async () => {

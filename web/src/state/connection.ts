@@ -183,7 +183,21 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
     disconnect: async () => {
       const current = get().state;
       if (current.kind !== 'ready' && current.kind !== 'wrong-device') return;
-      await current.transport.close();
+      const { transport } = current;
+      await transport.close();
+      // `forget()` revokes the page's permission for this device, so
+      // `navigator.hid.getDevices()` no longer returns it. Without
+      // this, reloading the page brings the silent-reconnect path
+      // back online and the user is reconnected against their wishes.
+      // Older or polyfilled HIDDevice may not have `forget` — guard
+      // accordingly. Best-effort: if forget throws we still treat the
+      // disconnect as successful because the transport is closed.
+      try {
+        await transport.device.forget?.();
+      } catch {
+        // Ignore — the transport is already closed, the user is
+        // effectively disconnected for this session.
+      }
       set({ state: { kind: 'idle' } });
     },
 
