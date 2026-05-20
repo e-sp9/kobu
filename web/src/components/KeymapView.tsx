@@ -55,6 +55,11 @@ export function KeymapView({
     () =>
       buildCells(definition.layouts.keymap as ReadonlyArray<ReadonlyArray<LayoutEntry>>, {
         midCol,
+        // Snap cells to their column index so the rendered layout is
+        // immune to off-by-N `{x: N}` mistakes embedded in old
+        // firmware builds of vial.json. The renderer is deterministic
+        // from (row, col) alone.
+        snapToCol: true,
       }),
     [definition.layouts.keymap, midCol],
   );
@@ -228,6 +233,19 @@ export interface BuildCellsOptions {
   midCol?: number;
   /** Units of gap to inject when the row crosses the midline too tightly. */
   midGap?: number;
+  /**
+   * When true, ignore the `{x: N}` cursor advances in vial.json and
+   * deterministically place each cell at `x = col` on the left half
+   * and `x = col + midGap` on the right half. This makes the rendered
+   * layout immune to vial.json indent/gap mistakes — the cells line
+   * up with their col index regardless of what the firmware embedded.
+   * Used in production via the KeymapView component to recover from
+   * older firmware that ships an off-by-N thumb row indent.
+   *
+   * `midCol` must be set for the right-half offset to apply; without
+   * it the cells just sit at x=col.
+   */
+  snapToCol?: boolean;
 }
 
 /**
@@ -240,12 +258,32 @@ export interface BuildCellsOptions {
  * visually distinct. Rows that already declare an explicit `{x: 1}`
  * gap (the letter rows) are unaffected — the injection only kicks in
  * if the existing separation is below `midGap`.
+ *
+ * With `snapToCol: true`, the cursor-walking logic is bypassed
+ * entirely: each cell is placed at its column index (+ midGap on the
+ * right half). This produces a deterministic, vial.json-agnostic
+ * layout and is what KeymapView uses in production.
  */
 export function buildCells(
   rows: ReadonlyArray<ReadonlyArray<LayoutEntry>>,
   options: BuildCellsOptions = {},
 ): Cell[] {
-  const { midCol, midGap = 1 } = options;
+  const { midCol, midGap = 1, snapToCol = false } = options;
+  if (snapToCol) {
+    const cells: Cell[] = [];
+    rows.forEach((entries, rowIndex) => {
+      for (const entry of entries) {
+        if (typeof entry !== 'string') continue;
+        const [r, c] = entry.split(',').map((n) => Number(n));
+        if (!Number.isFinite(r) || !Number.isFinite(c)) continue;
+        const row = r ?? 0;
+        const col = c ?? 0;
+        const x = midCol !== undefined && col >= midCol ? col + midGap : col;
+        cells.push({ row, col, x, y: rowIndex, w: 1, h: 1 });
+      }
+    });
+    return cells;
+  }
   const cells: Cell[] = [];
   rows.forEach((entries, rowIndex) => {
     let cursorX = 0;
