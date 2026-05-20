@@ -55,6 +55,37 @@ describe('buildCells', () => {
     const cells = buildCells(layout, { midCol: 5, midGap: 2 });
     expect(cells.find((c) => c.row === 3 && c.col === 5)?.x).toBe(9);
   });
+
+  it('the production thumb-row layout {x:1}+{x:1} aligns each thumb under its same-col letter', () => {
+    // This is the layout shipped in firmware/vial.json after commit
+    // 4a21152 — once the user flashes the corresponding central.uf2
+    // and reconnects, the editor will render with these positions.
+    const productionLayout: ReadonlyArray<ReadonlyArray<LayoutEntry>> = [
+      ['0,0', '0,1', '0,2', '0,3', '0,4', { x: 1 }, '0,5', '0,6', '0,7', '0,8', '0,9'],
+      ['1,0', '1,1', '1,2', '1,3', '1,4', { x: 1 }, '1,5', '1,6', '1,7', '1,8', '1,9'],
+      ['2,0', '2,1', '2,2', '2,3', '2,4', { x: 1 }, '2,5', '2,6', '2,7', '2,8', '2,9'],
+      [{ x: 1 }, '3,1', '3,2', '3,3', '3,4', { x: 1 }, '3,5', '3,6', '3,7', '3,8'],
+    ];
+    const cells = buildCells(productionLayout, { midCol: 5 });
+    const get = (r: number, c: number) => cells.find((x) => x.row === r && x.col === c)?.x;
+
+    // Left-half thumbs sit directly under the letter columns 1..4
+    // (BS under W/S/X, LG/BS under E/D/C, LCtl under R/F/V, LS/Lng2 under T/G/B).
+    expect(get(3, 1)).toBe(get(0, 1));
+    expect(get(3, 2)).toBe(get(0, 2));
+    expect(get(3, 3)).toBe(get(0, 3));
+    expect(get(3, 4)).toBe(get(0, 4));
+
+    // Right-half thumbs sit directly under letter columns 5..8.
+    expect(get(3, 5)).toBe(get(0, 5));
+    expect(get(3, 6)).toBe(get(0, 6));
+    expect(get(3, 7)).toBe(get(0, 7));
+    expect(get(3, 8)).toBe(get(0, 8));
+
+    // Concrete numbers, for sanity / readability of failure messages.
+    expect(get(3, 1)).toBe(1);
+    expect(get(3, 5)).toBe(6);
+  });
 });
 
 describe('KeymapView', () => {
