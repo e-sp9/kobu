@@ -243,6 +243,22 @@ export function buildCustomSave(): VialPacket {
   return p;
 }
 
+/**
+ * Via `BootloaderJump` — restart into the XIAO BLE's UF2 mass-storage
+ * bootloader. Equivalent to double-tapping the RESET button on the
+ * board: the firmware reboots, the bootloader enumerates the
+ * `XIAO-BOOT` USB volume, and the firmware Vial endpoint goes away.
+ *
+ * The transport will drop the moment the firmware reboots, so callers
+ * should treat `send-failed` / `disconnected` as the expected outcome
+ * (not an error to surface).
+ */
+export function buildBootloaderJump(): VialPacket {
+  const p = emptyPacket();
+  p[0] = ViaCommand.BootloaderJump;
+  return p;
+}
+
 // ─── Parsers ──────────────────────────────────────────────────────────────
 
 export interface KeyboardId {
