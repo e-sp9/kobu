@@ -13,15 +13,36 @@
 import { InstallError, verifyXiaoBootDirectory, writeUf2 } from './filesystem';
 
 /**
+ * GitHub Release downloads from `github.com` don't return CORS
+ * headers, so a direct `fetch()` from the browser fails. In dev mode
+ * the Vite config proxies `/__release/*` to `https://github.com/*` so
+ * the same request becomes same-origin from the browser's point of
+ * view. Rewrite the asset URL accordingly when running on localhost.
+ *
+ * In production we deliberately leave the URL untouched — the
+ * existing CORS failure surfaces as a clear error in the UI, which is
+ * better than silently retrying through a proxy that may not be
+ * configured. Same-origin deployment (gh-pages) is the long-term fix.
+ */
+export function rewriteForDevProxy(downloadUrl: string): string {
+  if (typeof window === 'undefined') return downloadUrl;
+  if (!import.meta.env.DEV) return downloadUrl;
+  const url = new URL(downloadUrl);
+  if (url.host !== 'github.com') return downloadUrl;
+  return `/__release${url.pathname}${url.search}`;
+}
+
+/**
  * Fetch a UF2 release asset and return its bytes. Rejects with
  * `InstallError('write-failed', ...)` when the HTTP response is not
  * 2xx — using the same error kind keeps the UI layer's switch
  * statement small.
  */
 export async function fetchUf2(downloadUrl: string): Promise<Uint8Array> {
+  const url = rewriteForDevProxy(downloadUrl);
   let res: Response;
   try {
-    res = await fetch(downloadUrl);
+    res = await fetch(url);
   } catch (err) {
     throw new InstallError(
       'write-failed',

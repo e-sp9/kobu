@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InstallError } from './filesystem';
-import { fetchUf2, flashUf2IntoDirectory } from './install';
+import { fetchUf2, flashUf2IntoDirectory, rewriteForDevProxy } from './install';
 
 describe('fetchUf2', () => {
   beforeEach(() => {
@@ -52,6 +52,25 @@ describe('fetchUf2', () => {
     const err = await fetchUf2('https://example.com/firmware.uf2').catch((e) => e);
     expect(err).toBeInstanceOf(InstallError);
     expect((err as InstallError).message).toContain('network down');
+  });
+});
+
+describe('rewriteForDevProxy', () => {
+  it('rewrites github.com URLs to /__release in dev mode', () => {
+    // import.meta.env.DEV is true under vitest by default.
+    expect(rewriteForDevProxy('https://github.com/foo/bar/releases/download/x/central.uf2')).toBe(
+      '/__release/foo/bar/releases/download/x/central.uf2',
+    );
+  });
+
+  it('leaves non-github URLs untouched', () => {
+    expect(rewriteForDevProxy('https://example.com/firmware.uf2')).toBe(
+      'https://example.com/firmware.uf2',
+    );
+  });
+
+  it('preserves query string when rewriting', () => {
+    expect(rewriteForDevProxy('https://github.com/a/b?x=1')).toBe('/__release/a/b?x=1');
   });
 });
 
