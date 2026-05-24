@@ -66,7 +66,9 @@ jobs:
   # the deploy job on the output.
   check-deploy-secrets:
     needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     # Override the workflow-level `working-directory: web` default —
     # this job doesn't run actions/checkout (it's a cheap secret probe
@@ -96,8 +98,10 @@ jobs:
     # routing config — left as a follow-up.)
     needs: [ci, check-deploy-secrets]
     if: |
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      ) &&
       needs.check-deploy-secrets.outputs.cloudflare_configured == 'true'
     runs-on: ubuntu-latest
     environment: production
