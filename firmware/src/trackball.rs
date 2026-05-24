@@ -223,10 +223,13 @@ impl<'a, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_E
                 if !matched {
                     return ProcessResult::Continue(event);
                 }
+                // Negate Y so finger-up moves the cursor up. The
+                // right-half PMW3610 is mirrored relative to the
+                // left-half mount, which leaves Y inverted by default.
                 let report = MouseReport {
                     buttons: 0,
                     x: clamp_i8(x),
-                    y: clamp_i8(y),
+                    y: clamp_i8(-y),
                     wheel: 0,
                     pan: 0,
                 };
