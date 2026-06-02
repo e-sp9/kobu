@@ -8,7 +8,8 @@
 |---|---|
 | [`pcb/`](pcb/) | KiCad プロジェクト (PCB / 回路図) |
 | [`case/`](case/) | ケースの STEP / STL |
-| [`firmware/`](firmware/) | RMK ベースのファームウェア (Rust, thumbv7em-none-eabihf) |
+| [`firmware/rmk/`](firmware/rmk/) | RMK ベースのファームウェア (Rust, thumbv7em-none-eabihf) |
+| [`firmware/zmk/`](firmware/zmk/) | ZMK 版ファームウェア (Zephyr, Nix/flake ビルド) |
 | [`web/`](web/) | kobu 専用 Web キーマップエディタ (WebHID + Vial protocol, React) |
 
 ## 開発環境
@@ -22,7 +23,7 @@
 ```sh
 direnv allow              # 初回のみ
 cd ~/git/private/kobu     # → 全部入り devshell (firmware + web)
-cd firmware/              # → firmware-only (Rust + flip-link + probe-rs)
+cd firmware/rmk/              # → firmware-only (Rust + flip-link + probe-rs)
 cd web/                   # → web-only      (Node 26 + pnpm)
 ```
 
@@ -46,7 +47,7 @@ nix develop .#web         # web のみ
 
 ## キーマップ
 
-![keymap](firmware/keymap/kobu.svg)
+![keymap](firmware/rmk/keymap/kobu.svg)
 
 ## Vial でキーマップを編集する
 
@@ -115,13 +116,13 @@ central（左半分）は XIAO nRF52840 BLE の内蔵 1MΩ / 510kΩ 電圧分圧
 3. macOS が `kobu` を再発見したら接続
 4. Bluetooth メニューを開くと残量が表示される
 
-LED が緑＝60% 以上 / 黄＝20〜60% / 赤＝20% 以下を示します（USB 給電中は赤が抑制されて緑に倒れる）。BLE の数値表示は LED と独立した経路で、`firmware/keyboard.toml` の `[ble]` セクションで `battery_adc_pin = "P0_31"` と分圧比 (`adc_divider_measured = 510`, `adc_divider_total = 1510`) を設定しています。XIAO nRF52840 BLE の BAT 分圧は対称な 1M/1M ではなく **R10 = 1MΩ / R11 = 510kΩ の非対称** で、`ratio = R11 / (R10 + R11) = 0.338` です。1/2 にしてしまうと健全な 4.0V LiPo が 2.7V と decode され、`get_battery_percent` が 0% を返してしまうので注意。
+LED が緑＝60% 以上 / 黄＝20〜60% / 赤＝20% 以下を示します（USB 給電中は赤が抑制されて緑に倒れる）。BLE の数値表示は LED と独立した経路で、`firmware/rmk/keyboard.toml` の `[ble]` セクションで `battery_adc_pin = "P0_31"` と分圧比 (`adc_divider_measured = 510`, `adc_divider_total = 1510`) を設定しています。XIAO nRF52840 BLE の BAT 分圧は対称な 1M/1M ではなく **R10 = 1MΩ / R11 = 510kΩ の非対称** で、`ratio = R11 / (R10 + R11) = 0.338` です。1/2 にしてしまうと健全な 4.0V LiPo が 2.7V と decode され、`get_battery_percent` が 0% を返してしまうので注意。
 
 ### 工場リセット
 
 書き換えたキーマップを丸ごと捨ててビルド時の keymap に戻したいときは:
 
-1. `firmware/keyboard.toml` の `[storage]` で `clear_layout = true` に変更
+1. `firmware/rmk/keyboard.toml` の `[storage]` で `clear_layout = true` に変更
 2. central をフラッシュ
 3. 起動後に `clear_layout = false` に戻し、再度フラッシュ
 
