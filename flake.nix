@@ -46,9 +46,117 @@
         # currently routes through staging-next.
         nodejs = pkgsNode.nodejs_26;
 
+        kobuUf2Conv = pkgs.writeShellApplication {
+          name = "kobu-uf2conv";
+          runtimeInputs = [ pkgs.python3 ];
+          text = ''
+            exec python3 - "$@" <<'PY'
+            import math
+            import struct
+            import sys
+            from pathlib import Path
+
+            MAGIC_START0 = 0x0A324655
+            MAGIC_START1 = 0x9E5D5157
+            MAGIC_END = 0x0AB16F30
+            FLAG_FAMILY_ID = 0x00002000
+            NRF52840_FAMILY = 0xADA52840
+            DEFAULT_BASE = 0x1000
+            PAYLOAD = 256
+
+            def usage(code=2):
+                print("usage: kobu-uf2conv <input.elf|input.bin> [output.uf2] [base-address-for-bin]", file=sys.stderr)
+                print("       base-address defaults to 0x1000 for raw .bin input", file=sys.stderr)
+                raise SystemExit(code)
+
+            def parse_int(value):
+                return int(value, 0)
+
+            def load_elf_segments(data):
+                if data[:4] != b"\x7fELF":
+                    return None
+                if data[4] != 1 or data[5] != 1:
+                    raise SystemExit("kobu-uf2conv: only little-endian ELF32 is supported")
+
+                e_phoff = struct.unpack_from("<I", data, 28)[0]
+                e_phentsize = struct.unpack_from("<H", data, 42)[0]
+                e_phnum = struct.unpack_from("<H", data, 44)[0]
+                segments = []
+                for index in range(e_phnum):
+                    off = e_phoff + index * e_phentsize
+                    p_type, p_offset, _p_vaddr, p_paddr, p_filesz, _p_memsz, _p_flags, _p_align = struct.unpack_from("<IIIIIIII", data, off)
+                    if p_type != 1 or p_filesz == 0:
+                        continue
+                    segments.append((p_paddr, data[p_offset:p_offset + p_filesz]))
+                if not segments:
+                    raise SystemExit("kobu-uf2conv: ELF has no loadable segments")
+                return segments
+
+            def bin_segment(data, base):
+                return [(base, data)]
+
+            def linearize_segments(segments):
+                start = min(base for base, _segment in segments)
+                if start % PAYLOAD:
+                    start -= start % PAYLOAD
+                end = max(base + len(segment) for base, segment in segments)
+                image = bytearray([0xFF]) * (end - start)
+                for base, segment in sorted(segments):
+                    begin = base - start
+                    finish = begin + len(segment)
+                    image[begin:finish] = segment
+                return start, bytes(image)
+
+            def write_uf2(segments, output):
+                start, image = linearize_segments(segments)
+                blocks = []
+                for offset in range(0, len(image), PAYLOAD):
+                    chunk = image[offset:offset + PAYLOAD]
+                    chunk = chunk + bytes(PAYLOAD - len(chunk))
+                    blocks.append((start + offset, chunk))
+
+                out = bytearray()
+                total = len(blocks)
+                for block_no, (addr, chunk) in enumerate(blocks):
+                    header = struct.pack(
+                        "<IIIIIIII",
+                        MAGIC_START0,
+                        MAGIC_START1,
+                        FLAG_FAMILY_ID,
+                        addr,
+                        PAYLOAD,
+                        block_no,
+                        total,
+                        NRF52840_FAMILY,
+                    )
+                    out += header + chunk + bytes(512 - 32 - PAYLOAD - 4) + struct.pack("<I", MAGIC_END)
+                output.write_bytes(out)
+
+            if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
+                usage(0)
+            if not (2 <= len(sys.argv) <= 4):
+                usage()
+
+            input_path = Path(sys.argv[1])
+            output_path = Path(sys.argv[2]) if len(sys.argv) >= 3 else input_path.with_suffix(".uf2")
+            data = input_path.read_bytes()
+            segments = load_elf_segments(data)
+            if segments is None:
+                base = parse_int(sys.argv[3]) if len(sys.argv) == 4 else DEFAULT_BASE
+                segments = bin_segment(data, base)
+            elif len(sys.argv) == 4:
+                raise SystemExit("kobu-uf2conv: base-address is only valid for raw .bin input")
+
+            write_uf2(segments, output_path)
+            print(output_path)
+            PY
+          '';
+        };
+
         firmwarePackages = [
           rustToolchain
           pkgs.flip-link
+          kobuUf2Conv
           pkgs.probe-rs-tools
           pkgs.cargo-binutils
           pkgs.cargo-generate
