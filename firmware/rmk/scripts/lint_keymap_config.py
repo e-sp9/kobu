@@ -2,7 +2,7 @@
 """Lint vial.json / keyboard.toml consistency for kobu.
 
 Run from the repo root:
-    python3 firmware/scripts/lint_keymap_config.py
+    python3 firmware/rmk/scripts/lint_keymap_config.py
 
 Exits non-zero on the first inconsistency. Designed to catch the
 classes of bugs the Vial-support issue series surfaced:
@@ -38,9 +38,11 @@ SHORT_NAME_MAX_PER_LINE = 8
 # where N = ble_profiles_num.
 USER_KEYCODES_AFTER_PROFILES = 4
 
-ROOT = Path(__file__).resolve().parents[2]
-VIAL = ROOT / "firmware" / "vial.json"
-TOML = ROOT / "firmware" / "keyboard.toml"
+# This script lives at firmware/rmk/scripts/; the RMK firmware root (holding
+# vial.json + keyboard.toml) is two levels up.
+RMK = Path(__file__).resolve().parents[1]
+VIAL = RMK / "vial.json"
+TOML = RMK / "keyboard.toml"
 
 
 def err(msg: str) -> None:
