@@ -1,0 +1,47 @@
+# kobu ZMK firmware — west manifest.
+#
+# This file is the single source of truth for the ZMK version and all external
+# modules. zmk-nix (firmware/zmk/flake.nix) consumes it verbatim: its
+# fetchZephyrDeps writes `.west/config` pointing here and runs `west update`,
+# so pinning ZMK + the modules here pins the entire build. The fixed-output
+# `zephyrDepsHash` in flake.nix freezes the resolved result.
+#
+# Revisions match KobitoKey_QWERTY (the ZMK keyboard kobu's keymap was ported
+# from) so kobu inherits the exact, proven ZMK 0.3 + PMW3610 + RGB-LED-widget
+# stack. sensor_rotation is intentionally NOT included: kobu uses raw trackball
+# axes (the RMK firmware applies no rotation — see firmware/rmk/src/trackball.rs),
+# unlike KobitoKey which rotates 70°/24° for its angled ball mounts.
+manifest:
+  remotes:
+    - name: zmkfirmware
+      url-base: https://github.com/zmkfirmware
+    - name: badjeff
+      url-base: https://github.com/badjeff
+    - name: caksoylar
+      url-base: https://github.com/caksoylar
+
+  projects:
+    # ZMK core. `import: app/west.yml` transitively pulls Zephyr + all HALs.
+    - name: zmk
+      remote: zmkfirmware
+      revision: v0.3
+      import: app/west.yml
+
+    # PMW3610 optical-trackball driver (both halves carry one).
+    - name: zmk-pmw3610-driver
+      remote: badjeff
+      revision: zmk-0.3
+
+    # Onboard RGB LED status widget (drives the rgbled_adapter shield).
+    # Pinned to the v0.3 release tag (matches ZMK v0.3): `main` has moved to a
+    # newer ZMK endpoint API (zmk_endpoint_get_selected) and renamed the XIAO
+    # board overlay to xiao_ble_zmk.overlay, both of which break against ZMK
+    # v0.3 + seeeduino_xiao_ble. The v0.3 tag uses zmk_endpoints_selected and
+    # ships boards/seeeduino_xiao_ble.overlay (correct led-red/green/blue
+    # aliases). KobitoKey pinned `main` but built before that drift.
+    - name: zmk-rgbled-widget
+      remote: caksoylar
+      revision: v0.3
+
+  self:
+    path: config

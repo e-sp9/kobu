@@ -1,0 +1,15 @@
+# Nix build outputs
+/result
+/result-*
+
+# West workspace (created by the fallback manual `west update`). The manual
+# build uses this dir as the west topdir, so Zephyr lands in ./zephyr — ignore
+# its fetched contents but KEEP the tracked config/shield module manifest
+# zephyr/module.yml (needed by the Nix build to find the kobu shield).
+/.west/
+/zmk/
+/zephyr/*
+!/zephyr/module.yml
+/modules/
+/tools/
+/build/

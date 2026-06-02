@@ -1,0 +1,14 @@
+# GitHub Actions build matrix (zmkfirmware/zmk build-user-config workflow).
+# The Nix flake (flake.nix) does NOT read this file — it is here for CI parity
+# with KobitoKey-style ZMK config repos. LEFT = central (gets ZMK Studio over
+# USB), RIGHT = peripheral, plus a settings_reset image.
+include:
+  - board: seeeduino_xiao_ble
+    shield: kobu_left rgbled_adapter
+    snippet: studio-rpc-usb-uart
+
+  - board: seeeduino_xiao_ble
+    shield: kobu_right rgbled_adapter
+
+  - board: seeeduino_xiao_ble
+    shield: settings_reset

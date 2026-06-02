@@ -1,0 +1,17 @@
+# Registers firmware/zmk/ as a ZMK/Zephyr module so the custom `kobu` shield
+# under config/boards/shields/kobu/ is discoverable.
+#
+# zmk-nix (nix/zmk/keyboard.nix) only passes -DZMK_EXTRA_MODULES=<src root> when
+# a `zephyr/module.yml` exists at the SOURCE ROOT (= firmware/zmk/, where
+# flake.nix lives) — NOT inside config/. ZMK v0.3's app/CMakeLists.txt adds
+# ZMK_EXTRA_MODULES to ZEPHYR_EXTRA_MODULES but does NOT derive a board root
+# from ZMK_CONFIG, so without this file the shield is never found and the build
+# fails with "shield kobu_left not found". `board_root: config` points Zephyr at
+# <module>/config/boards, where the kobu shield lives.
+#
+# (KobitoKey uses config/zephyr/module.yml with `board_root: .` for the GitHub
+# Actions flow; the zmk-nix flow needs it at the src root with `board_root:
+# config` instead.)
+build:
+  settings:
+    board_root: config
