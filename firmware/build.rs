@@ -80,6 +80,68 @@ fn main() {
     //  Layer D = bigger trouBLE pool via .cargo/config.toml env.)
     patch_rmk_timeout_gatt_reply();
     patch_rmk_supervision_timeout_2s();
+    // Pointer "もっさり over time": macOS relaxes the bonded HID link to a slow
+    // interval (~30-50ms) for power-saving after a while; rmk only logs the
+    // change, so the pointer report rate drifts to ~20-33Hz and STAYS there
+    // until reconnect. Capture the live interval and re-assert the fast 7.5ms
+    // params, but only when actually drifted slow (don't spam macOS).
+    patch_rmk_host_conn_interval_atomic();
+    patch_rmk_reassert_fast_conn_params();
+    // Round 12: make the round-11 re-assert EVENT-DRIVEN. After a motion-heavy
+    // stale reconnect macOS lands the link fully relaxed (~30-50ms); the 10s
+    // poll then took up to ~10s to pull it back to 7.5ms = the acute "もっさり→
+    // しばらくで回復". Signal the re-assert loop the instant a slow interval lands
+    // (in the ConnectionParamsUpdated arm) + keep a 2s backstop, collapsing the
+    // recovery from ~10s to ms. Anchors on the round-11 patched text → run after.
+    patch_rmk_conn_drift_atomic();
+    patch_rmk_conn_drift_event_driven();
+    // Round 18 — pointer もっさり OVER TIME = the macOS host link relaxes over a
+    // session. kobu's stage-2 request was a FIXED min==max=7.5ms, BELOW Apple's
+    // ~11.25ms BLE-HID floor → macOS SILENTLY REJECTS it → the link sits at
+    // stage-1's fixed 15ms (66Hz, never the 7.5ms/133Hz ZMK reaches) and over
+    // time relaxes into the 15-18ms band that the >18ms re-assert gate never
+    // corrects. ZMK requests a RANGE 7.5-15ms (MIN_INT=6/MAX_INT=12) which macOS
+    // CAN satisfy near its floor and HOLDS all session. This patch makes kobu
+    // ZMK-faithful: stage-2 → range 7.5-15ms, re-assert → range 7.5-15ms, both
+    // drift gates 18ms→12ms (close the dead band; matches the "past 12ms"
+    // comment). ADDITIVE — anchors on the reassert/conn-drift patched text, so
+    // it MUST run after them. Host-only + request-not-force → no wedge risk.
+    patch_rmk_host_conn_range_zmk();
+    // Round 19 — residual over-time excursions: macOS grants the MAX end of the
+    // requested range, so round-18's [7.5,15ms] rested at 15ms (66Hz) and 15ms
+    // ALSO tripped the >12ms gate (self-sustained re-assert churn that re-opens
+    // negotiation → macOS re-grants the slow end). ZMK requests its range ONCE
+    // and never perturbs it. Cap MAX at the 11.25ms Apple HID floor (rest
+    // 89-133Hz) + raise the gate 12ms→13ms so the healthy point stops re-tripping
+    // (a true relax ≥30ms still fires). ADDITIVE on the round-18 output → after.
+    patch_rmk_host_conn_narrow_max_r19();
+    // Round 21 — pointer のろのろ ROOT CAUSE (LED-confirmed: PURPLE ~15ms during
+    // のろのろ, no white): peripheral LATENCY, not interval. kobu requested
+    // max_latency=0 at every host conn-param site; ZMK requests latency=30.
+    // latency=0 forbids macOS the cheap power-save (skip idle intervals), so its
+    // ONLY lever is to RELAX THE INTERVAL (~15ms=66Hz=のろのろ); the 2s re-assert
+    // then claws it back = the ~5s relax/recover loop. latency=30 keeps the fast
+    // interval and lets macOS skip idle events instead (ZMK behaviour). Host conn
+    // only (the split link in split/ble/central.rs stays latency 0 — low relay
+    // lag). Active input is instant (latency applies only when idle).
+    patch_rmk_host_latency_30_r21();
+    // Round 23 diagnostic — count pointer samples PRODUCED by the PMW3610 (in
+    // read_event) so the PERIPHERAL LED can show its own production rate. The
+    // central LED already shows the ARRIVAL rate; comparing the two decisively
+    // separates "right sensor produces too few" (production) from "split link
+    // loses them in transit". Two additive patches (atomic + increment).
+    patch_rmk_peripheral_samples_atomic_r23();
+    patch_rmk_peripheral_samples_count_r23();
+    // Round 24 — のろのろ ROOT CAUSE (confirmed: both diag LEDs green during のろのろ
+    // ⇒ samples reach the central fine; host link is the issue; "~5s recovery" =
+    // kobu's 2s re-assert cycle). kobu RE-ASSERTS host conn-params every 2s
+    // (churn), which re-opens negotiation and makes macOS RELAX the link →
+    // のろのろ → re-assert claws back in ~5s → relaxes again. KobitoKey requests
+    // host params ONCE ([7.5,15ms], latency 0, sup 2s) and never touches them, so
+    // macOS HOLDS the link = smooth. Make kobu KobitoKey-exact + REQUEST-ONCE:
+    // latency 30→0, max 11.25→15ms ([7.5,15] range macOS accepts & holds), and
+    // neuter both re-assert gates (>13ms → >4s = never fires) so no churn.
+    patch_rmk_host_conn_request_once_r24();
 
     generate_vial_config();
 
@@ -2288,7 +2350,7 @@ fn patch_rmk_timeout_ble_writer() {
                 // draining so the keyboard cannot wedge. 8 ms (drop fast) for
                 // mouse — run_pointer_flush re-emits motion from its accumulator.
                 match ::embassy_time::with_timeout(
-                    ::embassy_time::Duration::from_millis(8),
+                    ::embassy_time::Duration::from_millis(40),
                     self.mouse_report.notify(self.conn, &buf),
                 )
                 .await
@@ -2800,7 +2862,16 @@ fn patch_rmk_capture_mouse_buttons() {
 /// airtime it costs during bring-up) drops 4×. Affects both halves' PMW3610
 /// (the central scroll ball too — harmless at 500 Hz).
 fn patch_rmk_pmw3610_slower_poll() {
-    const MARKER: &str = "// kobu: PMW3610 default poll 500us -> 2ms applied";
+    // ZMK (KobitoKey, smooth reference) reports the pointer at CONFIG_PMW3610_
+    // REPORT_INTERVAL_MIN = 8 ms (≈125 Hz), matched to its sensor RUN-RATE and
+    // its ~7.5-15 ms BLE links. kobu polled at 2 ms (500 Hz), a ~3.7× over-feed
+    // of the 7.5 ms (~133 Hz) split link, so every drop-oldest queue on the
+    // right-half path discarded pointer samples ("もっさり"). 8 ms matches ZMK:
+    // the PMW3610 hardware accumulates counts between reads, so NO travel is
+    // lost — it is just delivered as ~125 fuller samples/s instead of ~500 thin
+    // ones, so the source no longer over-feeds the link.
+    const MARKER: &str = "// kobu: PMW3610 default poll -> 8ms (ZMK REPORT_INTERVAL_MIN parity) applied";
+    const OLD_MARKER_2MS: &str = "// kobu: PMW3610 default poll 500us -> 2ms applied";
     const RMK_VERSION: &str = "0.8.2";
 
     let Some(path) = find_rmk_file(RMK_VERSION, "src/input_device/pmw3610.rs") else {
@@ -2821,16 +2892,30 @@ fn patch_rmk_pmw3610_slower_poll() {
         return;
     }
 
-    let from = "poll_interval: Duration::from_micros(500),";
-    let to = "poll_interval: Duration::from_micros(2000), // kobu: 500us->2ms, cut split-link radio flood during BLE bring-up (central coalesces, no feel change)";
-    if !contents.contains(from) {
+    // Dual anchor: a PRISTINE registry has the upstream `from_micros(500)`; a
+    // registry already carrying the prior kobu 2 ms patch has the 2000 literal.
+    // Replace whichever is present (mirrors patch_rmk_via_custom_get_kobu's
+    // v1/original dual-anchor). With this scheme `cargo clean -p rmk` is enough
+    // to re-apply over an already-patched registry — no pristine re-extract.
+    let pristine = "poll_interval: Duration::from_micros(500),";
+    let prior_2ms = "poll_interval: Duration::from_micros(2000), // kobu: 500us->2ms, cut split-link radio flood during BLE bring-up (central coalesces, no feel change)";
+    let to = "poll_interval: Duration::from_micros(8000), // kobu: 8ms = ZMK CONFIG_PMW3610_REPORT_INTERVAL_MIN=8 -> ~125Hz, matched to the 7.5ms split-link deliverable rate so the source no longer over-feeds the drop-oldest queues";
+    if contents.contains(prior_2ms) {
+        contents = contents.replace(prior_2ms, to);
+    } else if contents.contains(pristine) {
+        contents = contents.replace(pristine, to);
+    } else {
         panic!(
-            "kobu: expected rmk-{RMK_VERSION} pmw3610.rs default poll_interval anchor missing in {}; \
+            "kobu: expected rmk-{RMK_VERSION} pmw3610.rs poll_interval anchor (neither pristine 500us nor prior 2ms) missing in {}; \
              upstream may have changed — update firmware/build.rs::patch_rmk_pmw3610_slower_poll",
             path.display()
         );
     }
-    contents = contents.replace(from, to);
+
+    // Strip the stale 2 ms marker line so the file does not accumulate markers.
+    if contents.contains(OLD_MARKER_2MS) {
+        contents = contents.replace(&format!("\n{}\n", OLD_MARKER_2MS), "\n");
+    }
 
     contents.push('\n');
     contents.push_str(MARKER);
@@ -3283,6 +3368,661 @@ fn patch_rmk_supervision_timeout_2s() {
     }
     // Both update_conn_params stages use 5s; replace all.
     contents = contents.replace(from, to);
+
+    contents.push('\n');
+    contents.push_str(MARKER);
+    contents.push('\n');
+    fs::write(&path, contents).unwrap_or_else(|e| {
+        panic!("kobu: failed to write {}: {e}", path.display());
+    });
+}
+
+/// Pointer-もっさり-over-time fix (atomic): inject `KOBU_HOST_CONN_INTERVAL_US`
+/// next to the other kobu atomics. The patched gatt_events_task stores the live
+/// host connection interval here on every ConnectionParamsUpdated, and the
+/// patched set_conn_params re-asserts the fast 7.5ms params only when it has
+/// drifted slow.
+fn patch_rmk_host_conn_interval_atomic() {
+    const MARKER: &str = "// kobu: host conn-interval atomic applied";
+    const RMK_VERSION: &str = "0.8.2";
+
+    let Some(path) = find_rmk_file(RMK_VERSION, "src/input_device/battery.rs") else {
+        return;
+    };
+    println!("cargo:rerun-if-changed={}", path.display());
+    let mut contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("kobu: failed to read {}: {e}", path.display());
+    });
+    if contents.contains(MARKER) {
+        return;
+    }
+
+    let anchor = "pub static KOBU_INPUT_GATE_WAKE: Signal<crate::RawMutex, ()> = Signal::new();";
+    if !contents.contains(anchor) {
+        panic!(
+            "kobu: expected KOBU_INPUT_GATE_WAKE anchor in rmk-{RMK_VERSION} input_device/battery.rs at {}; \
+             patch_rmk_kobu_input_gate_atomics must run first — check order in build.rs::main",
+            path.display()
+        );
+    }
+    let injected = "pub static KOBU_INPUT_GATE_WAKE: Signal<crate::RawMutex, ()> = Signal::new();\n\n// kobu: live host (Mac) BLE connection interval in microseconds, stored by the\n// patched gatt_events_task on every ConnectionParamsUpdated. 0 until the first\n// update. set_conn_params re-asserts fast 7.5ms params when this drifts > 12ms\n// (macOS power-saving relaxes a bonded HID link, collapsing the pointer rate).\npub static KOBU_HOST_CONN_INTERVAL_US: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);";
+    contents = contents.replace(anchor, injected);
+
+    contents.push('\n');
+    contents.push_str(MARKER);
+    contents.push('\n');
+    fs::write(&path, contents).unwrap_or_else(|e| {
+        panic!("kobu: failed to write {}: {e}", path.display());
+    });
+}
+
+/// Pointer-もっさり-over-time fix (the cure): (a) record the live host interval
+/// on every ConnectionParamsUpdated, and (b) replace the terminal
+/// `core::future::pending()` in set_conn_params with a loop that re-asserts the
+/// fast 7.5ms / latency-0 params whenever macOS has relaxed the link past 12ms.
+/// Request-not-force (macOS arbitrates; update_conn_params swallows rejection),
+/// gated so we don't spam the host while already fast, and it still never
+/// returns so run_ble_keyboard's select3 cancels it on disconnect. Touches only
+/// the HOST conn (stack/conn in set_conn_params), never the split link, and runs
+/// only after the two initial settles, so it can't reopen the boot wedge.
+fn patch_rmk_reassert_fast_conn_params() {
+    const MARKER: &str = "// kobu: re-assert fast host conn params on drift applied";
+    const RMK_VERSION: &str = "0.8.2";
+
+    let Some(path) = find_rmk_file(RMK_VERSION, "src/ble/mod.rs") else {
+        println!(
+            "cargo:warning=kobu: could not find rmk-{RMK_VERSION} ble/mod.rs; \
+             re-assert-fast-conn-params patch was not applied"
+        );
+        return;
+    };
+    println!("cargo:rerun-if-changed={}", path.display());
+    let mut contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("kobu: failed to read {}: {e}", path.display());
+    });
+    if contents.contains(MARKER) {
+        return;
+    }
+
+    // (a) record the live interval in the ConnectionParamsUpdated arm.
+    let from_a = r#"                info!(
+                    "[gatt] ConnectionParamsUpdated: {:?}ms, {:?}, {:?}ms",
+                    conn_interval.as_millis(),
+                    peripheral_latency,
+                    supervision_timeout.as_millis()
+                );
+            }"#;
+    let to_a = r#"                info!(
+                    "[gatt] ConnectionParamsUpdated: {:?}ms, {:?}, {:?}ms",
+                    conn_interval.as_millis(),
+                    peripheral_latency,
+                    supervision_timeout.as_millis()
+                );
+                // kobu: remember the live host interval so set_conn_params can
+                // re-assert fast params only when macOS has drifted us slow.
+                crate::input_device::battery::KOBU_HOST_CONN_INTERVAL_US
+                    .store(conn_interval.as_micros() as u32, core::sync::atomic::Ordering::Relaxed);
+            }"#;
+    if !contents.contains(from_a) {
+        panic!(
+            "kobu: expected rmk-{RMK_VERSION} ble/mod.rs ConnectionParamsUpdated info block missing in {}; \
+             upstream may have changed — update firmware/build.rs::patch_rmk_reassert_fast_conn_params",
+            path.display()
+        );
+    }
+    contents = contents.replace(from_a, to_a);
+
+    // (b) replace the terminal pending() in set_conn_params with a gated re-assert loop.
+    let from_b = r#"    // Wait forever. This is because we want the conn params setting can be interrupted when the connection is lost.
+    // So this task shouldn't quit after setting the conn params.
+    core::future::pending::<()>().await;"#;
+    let to_b = r#"    // kobu: macOS relaxes a bonded HID link to ~30-50ms for power-saving after
+    // a while; rmk only logs the host param change, so the pointer report rate
+    // drifts to ~20-33Hz ("もっさり") and STAYS there until reconnect. Re-assert
+    // the fast 7.5ms / latency-0 params, but ONLY when the live interval has
+    // drifted past 12ms (don't spam macOS while already fast — Apple discourages
+    // frequent param requests). update_conn_params is request-not-force and
+    // swallows rejection, so this can't disconnect. Never returns, so the
+    // select3 in run_ble_keyboard still cancels this task on disconnect.
+    loop {
+        Timer::after_secs(10).await;
+        let interval_us =
+            crate::input_device::battery::KOBU_HOST_CONN_INTERVAL_US.load(Ordering::Relaxed);
+        if interval_us > 18_000 {
+            update_conn_params(
+                stack,
+                conn.raw(),
+                &ConnectParams {
+                    min_connection_interval: Duration::from_micros(15000),
+                    max_connection_interval: Duration::from_micros(15000),
+                    max_latency: 0,
+                    min_event_length: Duration::from_secs(0),
+                    max_event_length: Duration::from_secs(0),
+                    supervision_timeout: Duration::from_secs(2),
+                },
+            )
+            .await;
+        }
+    }"#;
+    if !contents.contains(from_b) {
+        panic!(
+            "kobu: expected rmk-{RMK_VERSION} ble/mod.rs set_conn_params terminal pending() missing in {}; \
+             upstream may have changed — update firmware/build.rs::patch_rmk_reassert_fast_conn_params",
+            path.display()
+        );
+    }
+    contents = contents.replace(from_b, to_b);
+
+    contents.push('\n');
+    contents.push_str(MARKER);
+    contents.push('\n');
+    fs::write(&path, contents).unwrap_or_else(|e| {
+        panic!("kobu: failed to write {}: {e}", path.display());
+    });
+}
+
+/// Round 12 (atomic): add `KOBU_HOST_CONN_DRIFT` Signal next to the round-11
+/// conn-interval atomic. Fired by the ConnectionParamsUpdated arm the instant
+/// macOS drifts the host link slow (>12ms) so the re-assert loop wakes within ms
+/// (acute post-reconnect もっさり). Anchors on the round-11-injected atomic, so it
+/// must run after patch_rmk_host_conn_interval_atomic.
+fn patch_rmk_conn_drift_atomic() {
+    const MARKER: &str = "// kobu: host conn-drift signal applied";
+    const RMK_VERSION: &str = "0.8.2";
+
+    let Some(path) = find_rmk_file(RMK_VERSION, "src/input_device/battery.rs") else {
+        return;
+    };
+    println!("cargo:rerun-if-changed={}", path.display());
+    let mut contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("kobu: failed to read {}: {e}", path.display());
+    });
+    if contents.contains(MARKER) {
+        return;
+    }
+
+    let anchor = "pub static KOBU_HOST_CONN_INTERVAL_US: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);";
+    if !contents.contains(anchor) {
+        panic!(
+            "kobu: expected round-11 KOBU_HOST_CONN_INTERVAL_US anchor in rmk-{RMK_VERSION} input_device/battery.rs at {}; \
+             patch_rmk_host_conn_interval_atomic must run first — check order in build.rs::main",
+            path.display()
+        );
+    }
+    let injected = "pub static KOBU_HOST_CONN_INTERVAL_US: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);\n\n// kobu (round 12): fired by the patched ConnectionParamsUpdated arm the instant\n// macOS drifts the host link slow (>12ms), so set_conn_params's re-assert loop\n// wakes within ms instead of on its poll — kills the acute post-reconnect もっさり.\npub static KOBU_HOST_CONN_DRIFT: Signal<crate::RawMutex, ()> = Signal::new();";
+    contents = contents.replace(anchor, injected);
+
+    contents.push('\n');
+    contents.push_str(MARKER);
+    contents.push('\n');
+    fs::write(&path, contents).unwrap_or_else(|e| {
+        panic!("kobu: failed to write {}: {e}", path.display());
+    });
+}
+
+/// Round 12 (the cure): make the round-11 conn-param re-assert EVENT-DRIVEN.
+/// (a) signal KOBU_HOST_CONN_DRIFT when the ConnectionParamsUpdated arm sees a
+/// slow (>12ms) interval; (b) replace the 10s poll with select(2s backstop,
+/// DRIFT.wait()) so a slow-landed link after a (re)connect snaps back to 7.5ms
+/// within ms. Anchors on the round-11 patched text → must run after
+/// patch_rmk_reassert_fast_conn_params. Still never returns (select3 cancels on
+/// disconnect); still gated on >12ms (no macOS spam); host-conn only (no wedge).
+fn patch_rmk_conn_drift_event_driven() {
+    const MARKER: &str = "// kobu: event-driven conn re-assert applied";
+    const RMK_VERSION: &str = "0.8.2";
+
+    let Some(path) = find_rmk_file(RMK_VERSION, "src/ble/mod.rs") else {
+        println!(
+            "cargo:warning=kobu: could not find rmk-{RMK_VERSION} ble/mod.rs; \
+             event-driven conn re-assert patch was not applied"
+        );
+        return;
+    };
+    println!("cargo:rerun-if-changed={}", path.display());
+    let mut contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("kobu: failed to read {}: {e}", path.display());
+    });
+    if contents.contains(MARKER) {
+        return;
+    }
+
+    // (a) signal on drift in the ConnectionParamsUpdated arm (round-11 store block).
+    let from_a = r#"                crate::input_device::battery::KOBU_HOST_CONN_INTERVAL_US
+                    .store(conn_interval.as_micros() as u32, core::sync::atomic::Ordering::Relaxed);
+            }"#;
+    let to_a = r#"                crate::input_device::battery::KOBU_HOST_CONN_INTERVAL_US
+                    .store(conn_interval.as_micros() as u32, core::sync::atomic::Ordering::Relaxed);
+                // kobu (round 12): wake the re-assert loop immediately on a slow
+                // drift so the pointer snaps back within ms (acute post-reconnect).
+                if conn_interval.as_micros() as u32 > 18_000 {
+                    crate::input_device::battery::KOBU_HOST_CONN_DRIFT.signal(());
+                }
+            }"#;
+    if !contents.contains(from_a) {
+        panic!(
+            "kobu: expected round-11 ConnectionParamsUpdated store block in rmk-{RMK_VERSION} ble/mod.rs at {}; \
+             patch_rmk_reassert_fast_conn_params must run first — update firmware/build.rs::patch_rmk_conn_drift_event_driven",
+            path.display()
+        );
+    }
+    contents = contents.replace(from_a, to_a);
+
+    // (b) replace the round-11 10s poll loop with an event-driven + 2s-backstop loop.
+    let from_b = r#"    loop {
+        Timer::after_secs(10).await;
+        let interval_us =
+            crate::input_device::battery::KOBU_HOST_CONN_INTERVAL_US.load(Ordering::Relaxed);
+        if interval_us > 18_000 {"#;
+    let to_b = r#"    crate::input_device::battery::KOBU_HOST_CONN_DRIFT.reset();
+    loop {
+        // kobu (round 12): event-driven — wake within ms when the
+        // ConnectionParamsUpdated arm signals a slow drift, with a 2s backstop
+        // for a slow interval that landed before this loop existed.
+        let _ = select(
+            Timer::after_secs(2),
+            crate::input_device::battery::KOBU_HOST_CONN_DRIFT.wait(),
+        )
+        .await;
+        let interval_us =
+            crate::input_device::battery::KOBU_HOST_CONN_INTERVAL_US.load(Ordering::Relaxed);
+        if interval_us > 18_000 {"#;
+    if !contents.contains(from_b) {
+        panic!(
+            "kobu: expected round-11 10s re-assert loop in rmk-{RMK_VERSION} ble/mod.rs at {}; \
+             patch_rmk_reassert_fast_conn_params must run first — update firmware/build.rs::patch_rmk_conn_drift_event_driven",
+            path.display()
+        );
+    }
+    contents = contents.replace(from_b, to_b);
+
+    contents.push('\n');
+    contents.push_str(MARKER);
+    contents.push('\n');
+    fs::write(&path, contents).unwrap_or_else(|e| {
+        panic!("kobu: failed to write {}: {e}", path.display());
+    });
+}
+
+/// Round 18 — pointer もっさり OVER TIME: request ZMK's conn-param RANGE and hold
+/// it (see the note at the call site in main()). The over-time degradation is
+/// the macOS host link relaxing: kobu's stage-2 request was a FIXED
+/// min==max=7.5ms, BELOW Apple's ~11.25ms BLE-HID floor, so macOS silently
+/// rejected it (rejection swallowed in update_conn_params) and the link sat at
+/// stage-1's fixed 15ms (66Hz) — never the 7.5ms/133Hz ZMK reaches — then
+/// relaxed into the 15-18ms band the >18ms re-assert gate never corrected. ZMK
+/// requests a RANGE 7.5-15ms which macOS can satisfy near its floor and HOLDS.
+///
+/// ADDITIVE patch: anchors on the text produced by
+/// patch_rmk_reassert_fast_conn_params + patch_rmk_conn_drift_event_driven, so
+/// it MUST be registered AFTER them in main(). Four edits to ble/mod.rs:
+///   1. stage-2 ConnectParams: fixed min==max=7.5ms → range 7.5-15ms (max 7500→15000).
+///   2. re-assert ConnectParams: fixed 15ms → range 7.5-15ms (min 15000→7500).
+///   3. drift-signal gate (ConnectionParamsUpdated arm): 18ms → 12ms.
+///   4. re-assert loop gate: 18ms → 12ms.
+/// Host-only, request-not-force (rejection swallowed), supervision 2s + latency 0
+/// untouched → cannot disconnect, no R10 boot-wedge surface.
+fn patch_rmk_host_conn_range_zmk() {
+    const MARKER: &str = "// kobu: ZMK-faithful conn-param range + 12ms gate applied";
+    const RMK_VERSION: &str = "0.8.2";
+
+    let Some(path) = find_rmk_file(RMK_VERSION, "src/ble/mod.rs") else {
+        println!(
+            "cargo:warning=kobu: could not find rmk-{RMK_VERSION} ble/mod.rs; \
+             ZMK conn-param range patch was not applied"
+        );
+        return;
+    };
+
+    println!("cargo:rerun-if-changed={}", path.display());
+
+    let mut contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("kobu: failed to read {}: {e}", path.display());
+    });
+
+    if contents.contains(MARKER) {
+        return;
+    }
+
+    let edits = [
+        // (1) stage-2: fixed 7.5ms point → range 7.5-15ms (change only the max line).
+        (
+            r#"            min_connection_interval: Duration::from_micros(7500),
+            max_connection_interval: Duration::from_micros(7500),"#,
+            r#"            min_connection_interval: Duration::from_micros(7500),
+            max_connection_interval: Duration::from_micros(15000), // kobu (round 18): ZMK range 7.5-15ms — a fixed 7.5ms point is below Apple's BLE-HID floor and silently rejected; a range macOS can satisfy near its floor and HOLD all session"#,
+        ),
+        // (2) re-assert: fixed 15ms point → range 7.5-15ms (change only the min line).
+        (
+            r#"                    min_connection_interval: Duration::from_micros(15000),
+                    max_connection_interval: Duration::from_micros(15000),"#,
+            r#"                    min_connection_interval: Duration::from_micros(7500), // kobu (round 18): re-assert the ZMK range so macOS can re-tighten toward its floor, not only 15ms
+                    max_connection_interval: Duration::from_micros(15000),"#,
+        ),
+        // (3) drift-signal gate (ConnectionParamsUpdated arm): 18ms → 12ms.
+        (
+            "                if conn_interval.as_micros() as u32 > 18_000 {",
+            "                if conn_interval.as_micros() as u32 > 12_000 {",
+        ),
+        // (4) re-assert loop gate: 18ms → 12ms (close the un-corrected 15-18ms band).
+        (
+            "        if interval_us > 18_000 {",
+            "        if interval_us > 12_000 {",
+        ),
+    ];
+
+    for (from, to) in edits {
+        if !contents.contains(from) {
+            panic!(
+                "kobu: ZMK conn-param range anchor missing in rmk-{RMK_VERSION} {} \
+                 (this patch must run AFTER patch_rmk_reassert_fast_conn_params + \
+                 patch_rmk_conn_drift_event_driven); fragment: {from:?}",
+                path.display()
+            );
+        }
+        contents = contents.replace(from, to);
+    }
+
+    contents.push('\n');
+    contents.push_str(MARKER);
+    contents.push('\n');
+
+    fs::write(&path, contents).unwrap_or_else(|e| {
+        panic!("kobu: failed to write {}: {e}", path.display());
+    });
+}
+
+/// Round 19 — pointer もっさり OVER TIME (residual excursions): narrow the
+/// requested MAX to Apple's BLE-HID floor so macOS rests FAST, not at 15ms.
+///
+/// Round 18 made kobu request the ZMK range 7.5-15ms and recovery got faster
+/// (user-confirmed), but the link still relaxed periodically. Mechanism
+/// (workflow, verified vs Zephyr v3.5 source): macOS is the sole authority over
+/// the active interval and grants the MAX end of the accepted range — so
+/// [7.5,15ms] lets it rest at 15ms (66Hz), and 15000us also trips the >12ms
+/// drift gate, so the re-assert keeps re-opening negotiation (each re-open is a
+/// fresh chance for macOS to re-grant the slow end → self-sustained oscillation).
+/// ZMK requests the range ONCE (~5s after connect, retries only on
+/// UNSUPP_LL_PARAM_VAL) and never perturbs it, so macOS holds it. The
+/// RequestConnectionParams arm is NOT the leak (only info!-logs; the
+/// connection-params-update feature is off; declining requires Central role and
+/// kobu is the peripheral). Fix: cap the requested MAX at 11.25ms (11250us,
+/// Apple's documented HID floor) in BOTH stage-2 and the re-assert so every
+/// legal grant point is 89-133Hz; and since the healthy resting interval
+/// (11.25ms) now sits below the gate, raise BOTH gates 12ms→13ms so the healthy
+/// point no longer re-trips (only a true relax to ≥30ms fires). Do NOT request a
+/// fixed point (7.5ms is rejected below the floor; 15ms is scaled to 30ms by
+/// Apple) and do NOT add a faster/periodic re-request (re-opening negotiation
+/// invites the slow re-grant — the ZMK divergence to avoid).
+///
+/// ADDITIVE — anchors on the round-18 (patch_rmk_host_conn_range_zmk) output, so
+/// it MUST be registered AFTER it in main(). Host-only, request-not-force,
+/// latency 0 + supervision 2s untouched → no R10 wedge surface.
+fn patch_rmk_host_conn_narrow_max_r19() {
+    const MARKER: &str = "// kobu: r19 narrowed conn-param max to 11.25ms + 13ms gate applied";
+    const RMK_VERSION: &str = "0.8.2";
+
+    let Some(path) = find_rmk_file(RMK_VERSION, "src/ble/mod.rs") else {
+        println!(
+            "cargo:warning=kobu: could not find rmk-{RMK_VERSION} ble/mod.rs; \
+             r19 narrow-max patch was not applied"
+        );
+        return;
+    };
+
+    println!("cargo:rerun-if-changed={}", path.display());
+
+    let mut contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("kobu: failed to read {}: {e}", path.display());
+    });
+
+    if contents.contains(MARKER) {
+        return;
+    }
+
+    let edits = [
+        // (A) stage-2 max 15ms → 11.25ms. Anchor on the full round-18-commented
+        //     line (unique).
+        (
+            "            max_connection_interval: Duration::from_micros(15000), // kobu (round 18): ZMK range 7.5-15ms — a fixed 7.5ms point is below Apple's BLE-HID floor and silently rejected; a range macOS can satisfy near its floor and HOLD all session",
+            "            max_connection_interval: Duration::from_micros(11250), // kobu (round 19): cap max at Apple's 11.25ms BLE-HID floor — macOS grants the MAX end, so this forces the resting point to 89-133Hz instead of 66Hz (and 11250 < 13000 gate, so the healthy point no longer re-trips the re-assert)",
+        ),
+        // (B) re-assert max 15ms → 11.25ms. Anchor on the two-line block (the
+        //     re-assert min line carries a unique round-18 comment) so this never
+        //     matches the stage-2 max line.
+        (
+            r#"                    min_connection_interval: Duration::from_micros(7500), // kobu (round 18): re-assert the ZMK range so macOS can re-tighten toward its floor, not only 15ms
+                    max_connection_interval: Duration::from_micros(15000),"#,
+            r#"                    min_connection_interval: Duration::from_micros(7500), // kobu (round 18): re-assert the ZMK range so macOS can re-tighten toward its floor, not only 15ms
+                    max_connection_interval: Duration::from_micros(11250), // kobu (round 19): cap at the 11.25ms HID floor (macOS grants the MAX end)"#,
+        ),
+        // (C) drift-signal gate 12ms → 13ms (healthy 11.25ms must not trip; a
+        //     real relax ≥30ms still does).
+        (
+            "                if conn_interval.as_micros() as u32 > 12_000 {",
+            "                if conn_interval.as_micros() as u32 > 13_000 {",
+        ),
+        // (D) re-assert loop gate 12ms → 13ms.
+        (
+            "        if interval_us > 12_000 {",
+            "        if interval_us > 13_000 {",
+        ),
+    ];
+
+    for (from, to) in edits {
+        if !contents.contains(from) {
+            panic!(
+                "kobu: r19 narrow-max anchor missing in rmk-{RMK_VERSION} {} \
+                 (must run AFTER patch_rmk_host_conn_range_zmk); fragment: {from:?}",
+                path.display()
+            );
+        }
+        contents = contents.replace(from, to);
+    }
+
+    contents.push('\n');
+    contents.push_str(MARKER);
+    contents.push('\n');
+
+    fs::write(&path, contents).unwrap_or_else(|e| {
+        panic!("kobu: failed to write {}: {e}", path.display());
+    });
+}
+
+/// Round 21 — pointer のろのろ ROOT CAUSE: peripheral LATENCY. See the note at
+/// the call site in main(). kobu requested `max_latency: 0` at all THREE host
+/// conn-param sites in set_conn_params (the 15ms stage, the 7.5-11.25ms stage,
+/// and the re-assert); ZMK requests CONFIG_BT_PERIPHERAL_PREF_LATENCY=30.
+/// latency is the lever macOS uses to power-save a HID link — with 30 it keeps
+/// the fast 7.5-15ms interval but skips idle events; with 0 its only power-save
+/// move is to RELAX the interval (~15ms = the のろのろ the diagnostic LED showed
+/// as PURPLE). This global-replaces all host `max_latency: 0,` -> `30,`. ADDITIVE
+/// on the already-patched registry, runs LAST. The SPLIT link
+/// (src/split/ble/central.rs) is a DIFFERENT file and keeps latency 0 (low relay
+/// lag) — untouched. Active mousing/typing is instant (latency only applies when
+/// there is nothing to send); supervision 2s is spec-valid: (1+30)*15ms*2 ≈
+/// 930ms < 2s. The re-assert now also re-requests latency 30 (benign + a
+/// recovery backstop), so there is no relaxation churn.
+fn patch_rmk_host_latency_30_r21() {
+    const MARKER: &str = "// kobu: r21 host max_latency 0->30 (ZMK PREF_LATENCY parity) applied";
+    const RMK_VERSION: &str = "0.8.2";
+
+    let Some(path) = find_rmk_file(RMK_VERSION, "src/ble/mod.rs") else {
+        println!(
+            "cargo:warning=kobu: could not find rmk-{RMK_VERSION} ble/mod.rs; \
+             r21 host-latency patch was not applied"
+        );
+        return;
+    };
+
+    println!("cargo:rerun-if-changed={}", path.display());
+
+    let mut contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("kobu: failed to read {}: {e}", path.display());
+    });
+
+    if contents.contains(MARKER) {
+        return;
+    }
+
+    // All THREE occurrences live in set_conn_params (host link only — this file
+    // is ble/mod.rs, NOT split/ble/central.rs). Global replace hits all of them.
+    let from = "max_latency: 0,";
+    let to = "max_latency: 30,";
+    if !contents.contains(from) {
+        panic!(
+            "kobu: r21 expected `{from}` in rmk-{RMK_VERSION} ble/mod.rs at {} \
+             (host set_conn_params) — upstream/patches changed; update firmware/build.rs",
+            path.display()
+        );
+    }
+    contents = contents.replace(from, to);
+
+    contents.push('\n');
+    contents.push_str(MARKER);
+    contents.push('\n');
+
+    fs::write(&path, contents).unwrap_or_else(|e| {
+        panic!("kobu: failed to write {}: {e}", path.display());
+    });
+}
+
+/// Round 23 diagnostic — inject `KOBU_PERIPHERAL_SAMPLES` (AtomicU32) into rmk's
+/// battery.rs so the PERIPHERAL can show its own pointer-PRODUCTION rate on its
+/// LED. Incremented in pmw3610.rs read_event on each non-zero Joystick; per-bin
+/// static, so on the peripheral bin it counts the RIGHT pointer ball. Compared
+/// against the central's ARRIVAL-rate LED this separates production-starvation
+/// (sensor produces few) from split-transit loss (central receives few).
+/// Anchors on the round-12 KOBU_HOST_CONN_DRIFT atomic.
+fn patch_rmk_peripheral_samples_atomic_r23() {
+    const MARKER: &str = "// kobu: r23 peripheral pointer-samples counter atomic applied";
+    const RMK_VERSION: &str = "0.8.2";
+
+    let Some(path) = find_rmk_file(RMK_VERSION, "src/input_device/battery.rs") else {
+        return;
+    };
+    println!("cargo:rerun-if-changed={}", path.display());
+    let mut contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("kobu: failed to read {}: {e}", path.display());
+    });
+    if contents.contains(MARKER) {
+        return;
+    }
+
+    let anchor = "pub static KOBU_HOST_CONN_DRIFT: Signal<crate::RawMutex, ()> = Signal::new();";
+    if !contents.contains(anchor) {
+        panic!(
+            "kobu: r23 anchor KOBU_HOST_CONN_DRIFT missing in rmk-{RMK_VERSION} {}; \
+             patch_rmk_conn_drift_atomic must run first",
+            path.display()
+        );
+    }
+    let injected = "pub static KOBU_HOST_CONN_DRIFT: Signal<crate::RawMutex, ()> = Signal::new();\n\n// kobu (round 23 diagnostic): pointer samples PRODUCED by this half's PMW3610\n// (incremented in pmw3610.rs read_event on each non-zero Joystick). Per-bin\n// static — on the peripheral bin this is the RIGHT pointer ball's production\n// rate, which peripheral_led.rs shows under the led-conn-diag feature to tell\n// production-starvation apart from split-transit loss.\npub static KOBU_PERIPHERAL_SAMPLES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);";
+    contents = contents.replace(anchor, injected);
+
+    contents.push('\n');
+    contents.push_str(MARKER);
+    contents.push('\n');
+    fs::write(&path, contents).unwrap_or_else(|e| {
+        panic!("kobu: failed to write {}: {e}", path.display());
+    });
+}
+
+/// Round 23 diagnostic — increment `KOBU_PERIPHERAL_SAMPLES` on each non-zero
+/// PMW3610 Joystick in read_event (the true SOURCE production rate, before any
+/// channel/forward drop). Unconditional (rmk cannot see the kobu cargo feature);
+/// a cheap atomic add per sample, only READ on the peripheral LED under
+/// led-conn-diag. Anchors on the read_event Joystick return.
+fn patch_rmk_peripheral_samples_count_r23() {
+    const MARKER: &str = "// kobu: r23 peripheral pointer-samples count applied";
+    const RMK_VERSION: &str = "0.8.2";
+
+    let Some(path) = find_rmk_file(RMK_VERSION, "src/input_device/pmw3610.rs") else {
+        return;
+    };
+    println!("cargo:rerun-if-changed={}", path.display());
+    let mut contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("kobu: failed to read {}: {e}", path.display());
+    });
+    if contents.contains(MARKER) {
+        return;
+    }
+
+    let from = "                    if motion.dx != 0 || motion.dy != 0 {\n                        return Event::Joystick([";
+    let to = "                    if motion.dx != 0 || motion.dy != 0 {\n                        crate::input_device::battery::KOBU_PERIPHERAL_SAMPLES\n                            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);\n                        return Event::Joystick([";
+    if !contents.contains(from) {
+        panic!(
+            "kobu: r23 read_event Joystick return anchor missing in rmk-{RMK_VERSION} {}; \
+             upstream may have changed — update firmware/build.rs",
+            path.display()
+        );
+    }
+    contents = contents.replace(from, to);
+
+    contents.push('\n');
+    contents.push_str(MARKER);
+    contents.push('\n');
+    fs::write(&path, contents).unwrap_or_else(|e| {
+        panic!("kobu: failed to write {}: {e}", path.display());
+    });
+}
+
+/// Round 24 — のろのろ ROOT CAUSE fix: request host conn-params ONCE like
+/// KobitoKey, stop the 2s re-assert churn that makes macOS relax the link.
+/// Diagnosis (confirmed on HW): both the peripheral PRODUCTION LED and the
+/// central ARRIVAL LED are GREEN during のろのろ ⇒ pointer samples reach the
+/// central fine (split link innocent); the slowness is the central→macOS host
+/// link, and the "~5s recovery" matches kobu's 2s-backstop re-assert cycle. Each
+/// re-assert re-opens negotiation and lets macOS power-relax the interval; the
+/// loop then claws it back in ~5s, repeating = intermittent のろのろ. KobitoKey
+/// requests [7.5,15ms]/latency0/sup2s ONCE and NEVER re-asserts, so macOS holds
+/// the link = always smooth. Three value edits to ble/mod.rs (additive on the
+/// R18/R19/R21 output): (1) max_latency 30→0 (KobitoKey PREF_LATENCY=0; reverts
+/// R21, which was based on the wrong ZMK-default reading); (2) the 11.25ms max
+/// → 15ms so the request is the macOS-accepted [7.5,15] range KobitoKey uses
+/// (reverts R19's sub-floor cap that macOS rejected); (3) both >13ms re-assert
+/// gates → >4s so the re-assert never fires = request-once (kills the churn).
+/// Host link only (split untouched); request-not-force; supervision 2s kept.
+fn patch_rmk_host_conn_request_once_r24() {
+    const MARKER: &str = "// kobu: r24 KobitoKey request-once host conn (no re-assert churn) applied";
+    const RMK_VERSION: &str = "0.8.2";
+
+    let Some(path) = find_rmk_file(RMK_VERSION, "src/ble/mod.rs") else {
+        println!(
+            "cargo:warning=kobu: could not find rmk-{RMK_VERSION} ble/mod.rs; \
+             r24 request-once patch was not applied"
+        );
+        return;
+    };
+    println!("cargo:rerun-if-changed={}", path.display());
+    let mut contents = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("kobu: failed to read {}: {e}", path.display());
+    });
+    if contents.contains(MARKER) {
+        return;
+    }
+
+    // (from, to, expected_count) — global replaces over the R18/19/21 output.
+    let edits = [
+        // (1) latency 30 -> 0 at all 3 host sites (KobitoKey PREF_LATENCY=0).
+        ("max_latency: 30,", "max_latency: 0,"),
+        // (2) the 11.25ms cap -> 15ms (the [7.5,15] range macOS accepts & holds).
+        ("from_micros(11250)", "from_micros(15000)"),
+        // (3) both re-assert gates 13ms -> 4s = effectively never (request-once;
+        //     the live conn interval can never exceed ~2s/supervision, so the
+        //     gate never trips and the re-assert never re-opens negotiation).
+        ("> 13_000", "> 4_000_000"),
+    ];
+    for (from, to) in edits {
+        if !contents.contains(from) {
+            panic!(
+                "kobu: r24 anchor `{from}` missing in rmk-{RMK_VERSION} {} \
+                 (must run AFTER patch_rmk_host_conn_range_zmk / narrow_max_r19 / latency_30_r21); \
+                 upstream/patches changed — update firmware/build.rs",
+                path.display()
+            );
+        }
+        contents = contents.replace(from, to);
+    }
 
     contents.push('\n');
     contents.push_str(MARKER);
