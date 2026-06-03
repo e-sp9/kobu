@@ -578,6 +578,21 @@ static void pmw3610_poll_work_callback(struct k_work *work) {
 
     if (data->ready) {
         pmw3610_report_data(dev);
+
+        // kobu: periodically RE-ASSERT force-awake (RUN mode). The kobu LEFT
+        // sensor's flaky 3-wire SDIO can corrupt the one-shot init write that
+        // forces RUN mode, leaving the sensor in a REST mode whose slow sample
+        // rate ignores SLOW rolls (only fast motion is caught) — confirmed on
+        // hardware (fast scroll works, slow doesn't, varies per boot). Re-writing
+        // the performance register every ~500 ms self-heals that within half a
+        // second. pmw3610_set_performance() self-gates on config->force_awake
+        // (no-op otherwise) and is idempotent (reads first, writes only if the
+        // RUN bits aren't already set), so this is cheap and safe on both halves.
+        static int reassert_ticks = 0;
+        if (++reassert_ticks >= (500 / CONFIG_PMW3610_POLL_INTERVAL_MS)) {
+            reassert_ticks = 0;
+            pmw3610_set_performance(dev, true);
+        }
     }
     k_work_schedule(&data->poll_work, K_MSEC(CONFIG_PMW3610_POLL_INTERVAL_MS));
 }
