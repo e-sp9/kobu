@@ -1,5 +1,9 @@
 name: Firmware
 
+# Custom (web-app) builds set `build_id`; echo it into the run name so the
+# ZMK editor's Worker can locate this run when polling.
+run-name: ${{ inputs.build_id && format('kobu custom build {0}', inputs.build_id) || 'Firmware' }}
+
 on:
   push:
     branches: [main]
@@ -17,6 +21,17 @@ on:
       - "flake.lock"
       - ".github/workflows/firmware.yml"
   workflow_dispatch:
+    inputs:
+      overrides_b64:
+        description: "base64 JSON of ZMK editor detailed-settings overrides (from the web app)"
+        required: false
+        default: ""
+        type: string
+      build_id:
+        description: "opaque id echoed into run-name so the web app can find this run"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -27,6 +42,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Custom (web-app) build: decode the overrides and patch the kobu ZMK
+      # config before building so the produced UF2s carry the user's CPI /
+      # timing / scroll settings. No-op on normal push / PR builds.
+      - name: Apply ZMK editor overrides (custom build)
+        if: inputs.overrides_b64
+        run: |
+          set -euxo pipefail
+          echo "${{ inputs.overrides_b64 }}" | base64 -d > /tmp/zmk-overrides.json
+          python3 scripts/zmk-apply-overrides.py /tmp/zmk-overrides.json
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
@@ -122,8 +147,10 @@ jobs:
       # RMK and ZMK images so the kobu-editor web app (and humans) can fetch the
       # latest UF2 over the public Releases API. Tag + assets are recreated on
       # every successful main build.
+      # Custom (overrides) builds must NOT overwrite the rolling release —
+      # the web app fetches their UF2 from the run artifact instead.
       - name: Publish firmware-latest pre-release
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !inputs.overrides_b64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
