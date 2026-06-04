@@ -10,7 +10,8 @@
 | [`case/`](case/) | ケースの STEP / STL |
 | [`firmware/rmk/`](firmware/rmk/) | RMK ベースのファームウェア (Rust, thumbv7em-none-eabihf) |
 | [`firmware/zmk/`](firmware/zmk/) | ZMK 版ファームウェア (Zephyr, Nix/flake ビルド) |
-| [`web/`](web/) | kobu 専用 Web キーマップエディタ (WebHID + Vial protocol, React) |
+| [`web/rmk-editor/`](web/rmk-editor/) | RMK 用 Web キーマップエディタ (WebHID + Vial protocol, React) |
+| [`web/zmk-editor/`](web/zmk-editor/) | ZMK 用 Web キーマップエディタ (ZMK Studio over USB/BLE, React) |
 
 ## 開発環境
 
@@ -24,7 +25,7 @@
 direnv allow              # 初回のみ
 cd ~/git/private/kobu     # → 全部入り devshell (firmware + web)
 cd firmware/rmk/              # → firmware-only (Rust + flip-link + probe-rs)
-cd web/                   # → web-only      (Node 26 + pnpm)
+cd web/rmk-editor/        # → web-only      (Node 26 + pnpm; web/zmk-editor も同じ)
 ```
 
 各ディレクトリの `.envrc` が `flake.nix` の対応する `devShells.*` を `use flake` で読み込む構成。

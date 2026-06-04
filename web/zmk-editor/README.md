@@ -1,7 +1,7 @@
 # kobu ZMK editor
 
 A web keymap editor for the **kobu** split keyboard running **ZMK**
-firmware. It lives under `web/zmk-editor/` (the RMK editor in `web/` is
+firmware. It lives under `web/zmk-editor/` (the RMK editor in `web/rmk-editor/` is
 left untouched) and is served at the `/zmk` subpath of the same site
 (`kobu-editor.digletts.dev/zmk`).
 
@@ -57,7 +57,7 @@ src/
   config/
     settings.ts  build-time knob schema + override payload
     build.ts     client for the Worker build endpoints (+ fflate unzip)
-  install/     UF2 flashing (File System Access API), ported from web/
+  install/     UF2 flashing (File System Access API), ported from web/rmk-editor/
   components/  React UI (connect, keymap grid, layer bar, behavior picker, install, settings)
   lib/browser.ts  Chromium / transport detection
 ```
@@ -85,9 +85,10 @@ the deployed Worker (it holds the GitHub token), so it can't be exercised from
 
 ## Deploy
 
-This app has **no Worker of its own**. Its parent `web/` Cloudflare Worker
-serves it: the deploy (`.github/workflows/web.yml`) builds this app with
-`base: /zmk/` into `web/dist/zmk/`, and `web/worker/index.ts` serves `/zmk`
+This app has **no Worker of its own**. The sibling `web/rmk-editor/` Cloudflare
+Worker serves it: the deploy (`.github/workflows/web.yml`) builds this app with
+`base: /zmk/` into `web/rmk-editor/dist/zmk/`, and `web/rmk-editor/worker/index.ts`
+serves `/zmk`
 with the right `Permissions-Policy` (serial/bluetooth) and hosts the build
 endpoints.
 
