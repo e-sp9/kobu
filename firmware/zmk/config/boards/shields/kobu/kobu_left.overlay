@@ -1,11 +1,15 @@
 /*
  * kobu LEFT half = central.
  *
- *   - Local PMW3610 (tb_left) drives SCROLL in 2D: roll the ball any direction
- *     and the page scrolls that way (up/down roll -> vertical wheel, left/right
- *     roll -> horizontal wheel), via the stock zip_xy_to_scroll_mapper. ~18 raw
- *     counts per scroll line. (Was horizontal-roll-only before; user asked for
- *     "scroll on any direction" + easier up-scroll.)
+ *   - Local PMW3610 (tb_left) drives VERTICAL SCROLL. BOTH roll axes feed the
+ *     vertical wheel (custom zip_xy_to_wheel_mapper folds REL_X and REL_Y onto
+ *     REL_WHEEL; horizontal/pan scroll intentionally removed): roll UP = scroll
+ *     UP, roll DOWN = scroll DOWN, roll RIGHT = scroll UP, roll LEFT = scroll
+ *     DOWN. Y is inverted (INPUT_TRANSFORM_Y_INVERT before the mapper) so that
+ *     up=up and the up+right / down+left diagonal adds instead of cancelling.
+ *     ~18 raw counts per scroll line. (Was 2D X->HWHEEL/Y->WHEEL; user asked for
+ *     right=up / left=down instead of horizontal pan, then for up=up + stronger
+ *     diagonal — see the &tb_left_listener block for the dead-diagonal note.)
  *   - Consumes the RIGHT half's forwarded pointer via tb_right_listener and
  *     runs the auto-mouse temp-layer (layer 4) on it (matches the RMK
  *     run_auto_mouse_layer: AUTO_MOUSE_LAYER=4, TIMEOUT=150ms, PRIOR_IDLE=300ms).
@@ -64,6 +68,27 @@
 };
 
 / {
+    /* Custom scroll mapper: fold BOTH roll axes onto the VERTICAL wheel.
+     *   REL_Y -> WHEEL is byte-identical to the stock zip_xy_to_scroll_mapper's
+     *     vertical mapping, so up/down roll scrolls vertically exactly as today.
+     *   REL_X -> WHEEL (instead of the stock X -> HWHEEL) makes left/right roll
+     *     scroll vertically too. The code-mapper preserves value/sign, and kobu's
+     *     convention is roll-right = +REL_X = WHEEL+ = scroll-up (RMK
+     *     trackball.rs ScrollProcessor, scroll_invert_x=false), so roll-right =
+     *     scroll-up and roll-left = scroll-down. Horizontal/pan scroll is gone.
+     * The downstream zip_scroll_scaler carries ONE remainder over the merged
+     * WHEEL stream (both axes share remainders->wheel, exactly as it already does
+     * across successive REL_Y events) -> total = sum(dx+dy)/18, no counts lost. */
+    zip_xy_to_wheel_mapper: zip_xy_to_wheel_mapper {
+        compatible = "zmk,input-processor-code-mapper";
+        #input-processor-cells = <0>;
+        type = <INPUT_EV_REL>;
+        map
+            = <INPUT_REL_Y INPUT_REL_WHEEL>
+            , <INPUT_REL_X INPUT_REL_WHEEL>
+            ;
+    };
+
     /* Auto-mouse layer (RIGHT ball). layer=4, idle-deactivate=150ms,
      * require-prior-idle=300ms. Pressing keys NOT in excluded-positions drops
      * the layer; the excluded set keeps the layer alive for everything you use
@@ -81,13 +106,19 @@
     status = "okay";
     device = <&tb_left>;
     input-processors =
-        <&zip_xy_to_scroll_mapper>,      /* 2D scroll: REL_X->HWHEEL (horizontal), REL_Y->WHEEL (vertical) — roll any direction, scroll that way */
-        <&zip_scroll_scaler 1 18>;       /* ~18 raw counts per scroll line (both axes) */
-        /* Direction (best-guess from the old "roll-right = WHEEL+ = scroll-up"):
-         * roll-up = scroll-up, roll-right = scroll-right. If a half is reversed,
-         * add <&zip_scroll_transform INPUT_TRANSFORM_Y_INVERT> (vertical) and/or
-         * INPUT_TRANSFORM_X_INVERT (horizontal) to this list. (OS "natural
-         * scrolling" also flips the perceived vertical direction.) */
+        <&zip_xy_transform INPUT_TRANSFORM_Y_INVERT>,  /* HW-confirmed: roll-up read as -WHEEL -> negate RAW REL_Y so roll-up = scroll-up. X (roll-right = scroll-up) is left alone. MUST be first (acts on REL_Y before the mapper folds it to REL_WHEEL). */
+        <&zip_xy_to_wheel_mapper>,       /* BOTH axes -> vertical wheel: roll-up = scroll-up, roll-right = scroll-up */
+        <&zip_scroll_scaler 1 18>;       /* ~18 raw counts per scroll line (single carried remainder over the merged WHEEL stream) */
+        /* HW-confirmed directions (user, 2026-06-06): roll-right = scroll-up was
+         * already correct; roll-up/down was REVERSED -> fixed by Y_INVERT above.
+         * Now both axes push the wheel the same way, so the up+right / down+left
+         * diagonal is ADDITIVE (strong). Inherent trade-off: folding two axes into
+         * ONE vertical wheel (no horizontal scroll, by spec) always leaves exactly
+         * one DEAD diagonal — here up+left / down+right, where the X intent
+         * (left=down / right=up) opposes the Y intent (up=up / down=down) and they
+         * cancel. This is unavoidable with stock ZMK linear processors, not a bug.
+         * (To flip the X axis instead, swap to INPUT_TRANSFORM_X_INVERT; both must
+         * stay BEFORE the mapper. OS "natural scrolling" flips perceived vertical.) */
 };
 
 &tb_right_listener {
